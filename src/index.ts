@@ -476,15 +476,24 @@ async function main(): Promise<void> {
     registeredGroups: () => registeredGroups,
   };
 
-  // Create and connect channels
+  // Create and connect channels (start both in parallel)
   whatsapp = new WhatsAppChannel(channelOpts);
   channels.push(whatsapp);
-  await whatsapp.connect();
 
-  // Create and connect WebSocket channel
   websocket = new WebSocketChannel(channelOpts);
   channels.push(websocket);
-  await websocket.connect();
+
+  // Start WhatsApp in background, don't block on it
+  whatsapp.connect().catch((err) => {
+    logger.error({ err }, 'WhatsApp connection failed');
+  });
+
+  // Start WebSocket
+  try {
+    await websocket.connect();
+  } catch (err) {
+    logger.error({ err }, 'Failed to start WebSocket channel');
+  }
 
   // Start subsystems (independently of connection handler)
   startSchedulerLoop({
