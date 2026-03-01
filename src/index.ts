@@ -9,6 +9,7 @@ import {
   TRIGGER_PATTERN,
 } from './config.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
+import { WebSocketChannel } from './channels/websocket.js';
 import {
   ContainerOutput,
   runContainerAgent,
@@ -52,6 +53,7 @@ let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
 
 let whatsapp: WhatsAppChannel;
+let websocket: WebSocketChannel;
 const channels: Channel[] = [];
 const queue = new GroupQueue();
 
@@ -478,6 +480,11 @@ async function main(): Promise<void> {
   whatsapp = new WhatsAppChannel(channelOpts);
   channels.push(whatsapp);
   await whatsapp.connect();
+
+  // Create and connect WebSocket channel
+  websocket = new WebSocketChannel(channelOpts);
+  channels.push(websocket);
+  await websocket.connect();
 
   // Start subsystems (independently of connection handler)
   startSchedulerLoop({

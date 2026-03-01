@@ -62,3 +62,8 @@ export const TRIGGER_PATTERN = new RegExp(
 // Uses system timezone by default
 export const TIMEZONE =
   process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+// WebSocket channel configuration
+export const WEBSOCKET_PORT = parseInt(process.env.WEBSOCKET_PORT || '9876', 10);
+export const WEBSOCKET_PAIRING_CODE_LENGTH = 6;
+export const WEBSOCKET_PAIRING_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
