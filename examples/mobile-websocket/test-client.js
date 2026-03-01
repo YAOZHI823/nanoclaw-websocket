@@ -3,37 +3,60 @@
 /**
  * Simple Node.js WebSocket client for testing NanoClaw
  * Usage:
- *   node test-client.js                    # Request pairing, then enter code
- *   node test-client.js PAIRING_CODE       # Verify with code directly
+ *   node test-client.js                    # Interactive mode
+ *   node test-client.js PAIRING_CODE       # Auto-verify with code
+ *   node test-client.js ws://url CODE     # Custom URL + code
  */
 
 import WebSocket from 'ws';
 import readline from 'readline';
 
-// Usage: node test-client.js [ws://url] [pairing_code]
+// Usage parsing
 const serverUrl = process.argv[2]?.startsWith('ws://') ? process.argv[2] : 'ws://localhost:9876';
+const pairingCode = process.argv[2]?.startsWith('ws://') ? process.argv[3] : process.argv[2];
 
-// Reuse deviceId from file if exists, otherwise generate new one
-import { readFileSync, writeFileSync, existsSync } from 'fs';
-const deviceIdFile = '/tmp/nanoclaw-device-id';
-let deviceId = existsSync(deviceIdFile) ? readFileSync(deviceIdFile, 'utf8') : `test-device-${Date.now()}`;
-if (!existsSync(deviceIdFile)) {
-  writeFileSync(deviceIdFile, deviceId);
-}
+// Device ID - always generate new one to avoid stale sessions
+const deviceId = `test-device-${Date.now()}`;
 console.log(`Device ID: ${deviceId}`);
 
 const ws = new WebSocket(serverUrl);
+
+// UseYNC mode for readline to prevent multiple simultaneous prompts
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
+  terminal: true,
 });
 
-// Keep stdin open even if empty line is entered
-process.stdin.resume();
+let waitingForInput = false;
 
 function send(obj) {
   ws.send(JSON.stringify(obj));
   console.log('→', JSON.stringify(obj));
+}
+
+function promptForInput() {
+  // Prevent multiple simultaneous prompts
+  if (waitingForInput) return;
+  waitingForInput = true;
+
+  rl.question('You: ', (input) => {
+    waitingForInput = false;
+
+    if (input.trim().toLowerCase() === 'exit') {
+      console.log('Goodbye!');
+      ws.close();
+      rl.close();
+      process.exit(0);
+    }
+
+    if (input.trim()) {
+      send({ type: 'message', content: input });
+    } else {
+      // Empty input, prompt again
+      promptForInput();
+    }
+  });
 }
 
 function handleMessage(data) {
@@ -44,11 +67,7 @@ function handleMessage(data) {
     case 'pairing_challenge':
       console.log(`\n📱 PAIRING CODE: ${msg.pairingCode}\n`);
       console.log('Enter the pairing code above (or press Enter to exit):');
-      if (rl.closed) {
-        console.log('(readline closed, auto-exiting)');
-        ws.close();
-        process.exit(0);
-      }
+
       rl.question('> ', (code) => {
         if (code && code.trim()) {
           console.log('Verifying pairing...');
@@ -67,9 +86,7 @@ function handleMessage(data) {
     case 'pairing_success':
       console.log('\n✅ Paired successfully' + (msg.message ? ` (${msg.message})` : '') + '!\n');
       console.log('Now you can send messages. Type and press Enter:\n');
-      if (!rl.closed) {
-        promptMessage();
-      }
+      promptForInput();
       break;
 
     case 'pairing_failed':
@@ -80,13 +97,16 @@ function handleMessage(data) {
 
     case 'message':
       console.log(`\n🤖 Assistant: ${msg.content}\n`);
-      if (!rl.closed) {
-        promptMessage();
-      }
+      promptForInput();
       break;
 
     case 'error':
       console.error('❌ Error:', msg.message);
+      promptForInput();
+      break;
+
+    case 'pong':
+      // Heartbeat response, ignore
       break;
 
     default:
@@ -94,31 +114,9 @@ function handleMessage(data) {
   }
 }
 
-function promptMessage() {
-  rl.question('You: ', (input) => {
-    if (input.trim().toLowerCase() === 'exit') {
-      ws.close();
-      rl.close();
-      process.exit(0);
-    }
-
-    if (input.trim()) {
-      send({
-        type: 'message',
-        content: input,
-      });
-    } else {
-      promptMessage();
-    }
-  });
-}
-
 ws.on('open', () => {
   console.log(`Connected to ${serverUrl}\n`);
 
-  // Check if a pairing code was provided as argument
-  // Can be: test-client.js CODE  or  test-client.js ws://url CODE
-  const pairingCode = process.argv[2]?.startsWith('ws://') ? process.argv[3] : process.argv[2];
   if (pairingCode && pairingCode.length === 6) {
     console.log('Verifying pairing with code:', pairingCode);
     send({
@@ -139,7 +137,9 @@ ws.on('message', handleMessage);
 
 ws.on('close', () => {
   console.log('\nDisconnected');
-  rl.close();
+  try {
+    rl.close();
+  } catch {}
   process.exit(0);
 });
 
