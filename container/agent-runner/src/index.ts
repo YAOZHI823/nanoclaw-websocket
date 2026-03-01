@@ -392,9 +392,11 @@ async function runQuery(
   let resultCount = 0;
 
   // Load global CLAUDE.md as additional system context (shared across all groups)
+  // Skip for device groups (device-*) as they communicate via WebSocket, not WhatsApp
   const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
   let globalClaudeMd: string | undefined;
-  if (!containerInput.isMain && fs.existsSync(globalClaudeMdPath)) {
+  const isDeviceGroup = containerInput.groupFolder.startsWith('device-');
+  if (!containerInput.isMain && !isDeviceGroup && fs.existsSync(globalClaudeMdPath)) {
     globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
   }
 

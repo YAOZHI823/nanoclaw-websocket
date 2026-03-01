@@ -16,6 +16,7 @@ import {
   TIMEZONE,
 } from './config.js';
 import { readEnvFile } from './env.js';
+import { MAIN_GROUP_FOLDER } from './config.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import {
@@ -111,26 +112,42 @@ function buildVolumeMounts(
   fs.mkdirSync(groupSessionsDir, { recursive: true });
   const settingsFile = path.join(groupSessionsDir, 'settings.json');
   if (!fs.existsSync(settingsFile)) {
-    fs.writeFileSync(
-      settingsFile,
-      JSON.stringify(
-        {
-          env: {
-            // Enable agent swarms (subagent orchestration)
-            // https://code.claude.com/docs/en/agent-teams#orchestrate-teams-of-claude-code-sessions
-            CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
-            // Load CLAUDE.md from additional mounted directories
-            // https://code.claude.com/docs/en/memory#load-memory-from-additional-directories
-            CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
-            // Enable Claude's memory feature (persists user preferences between sessions)
-            // https://code.claude.com/docs/en/memory#manage-auto-memory
-            CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
-          },
-        },
-        null,
-        2,
-      ) + '\n',
-    );
+    // For device groups (device-*), copy settings from main group as template
+    // This ensures they have the correct API tokens and configuration
+    let settings: Record<string, unknown> = {};
+    if (group.folder.startsWith('device-')) {
+      const mainSettingsFile = path.join(
+        DATA_DIR,
+        'sessions',
+        MAIN_GROUP_FOLDER,
+        '.claude',
+        'settings.json',
+      );
+      if (fs.existsSync(mainSettingsFile)) {
+        try {
+          settings = JSON.parse(fs.readFileSync(mainSettingsFile, 'utf-8'));
+          console.log(`[container-runner] Copied settings from main group for device: ${group.folder}`);
+        } catch {
+          console.warn(`[container-runner] Failed to read main settings, using defaults`);
+        }
+      }
+    }
+
+    // Add default settings if not already set
+    const envSettings = settings.env as Record<string, string> || {};
+    settings.env = envSettings;
+    const defaults: Record<string, string> = {
+      CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+      CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
+      CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
+    };
+    for (const [key, value] of Object.entries(defaults)) {
+      if (!(key in envSettings)) {
+        envSettings[key] = value;
+      }
+    }
+
+    fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + '\n');
   }
 
   // Sync skills from container/skills/ into each group's .claude/skills/

@@ -98,6 +98,24 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   // Create group folder
   fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
 
+  // Create CLAUDE.md for device chats if it doesn't exist
+  if (group.folder.startsWith('device-')) {
+    const claudeMdPath = path.join(groupDir, 'CLAUDE.md');
+    if (!fs.existsSync(claudeMdPath)) {
+      const deviceClaudeMd = `# Device Chat
+
+You are chatting with a user via WebSocket.
+
+## Important
+- Do NOT use \`mcp__nanoclaw__send_message\` tool
+- Just output your text response directly
+- NanoClaw will automatically send via the correct channel
+`;
+      fs.writeFileSync(claudeMdPath, deviceClaudeMd);
+      logger.info({ folder: group.folder }, 'Created device CLAUDE.md');
+    }
+  }
+
   logger.info(
     { jid, name: group.name, folder: group.folder },
     'Group registered',
@@ -220,6 +238,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
       if (text) {
+        logger.info({ chatJid, channel: channel.name, textLength: text.length }, 'Sending response via channel');
         await channel.sendMessage(chatJid, text);
         outputSentToUser = true;
       }

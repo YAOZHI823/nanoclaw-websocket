@@ -28,6 +28,9 @@ const rl = readline.createInterface({
   output: process.stdout,
 });
 
+// Keep stdin open even if empty line is entered
+process.stdin.resume();
+
 function send(obj) {
   ws.send(JSON.stringify(obj));
   console.log('→', JSON.stringify(obj));
@@ -41,8 +44,13 @@ function handleMessage(data) {
     case 'pairing_challenge':
       console.log(`\n📱 PAIRING CODE: ${msg.pairingCode}\n`);
       console.log('Enter the pairing code above (or press Enter to exit):');
+      if (rl.closed) {
+        console.log('(readline closed, auto-exiting)');
+        ws.close();
+        process.exit(0);
+      }
       rl.question('> ', (code) => {
-        if (code.trim()) {
+        if (code && code.trim()) {
           console.log('Verifying pairing...');
           send({
             type: 'pairing_verify',
@@ -57,9 +65,11 @@ function handleMessage(data) {
       break;
 
     case 'pairing_success':
-      console.log('\n✅ Paired successfully!\n');
+      console.log('\n✅ Paired successfully' + (msg.message ? ` (${msg.message})` : '') + '!\n');
       console.log('Now you can send messages. Type and press Enter:\n');
-      promptMessage();
+      if (!rl.closed) {
+        promptMessage();
+      }
       break;
 
     case 'pairing_failed':
@@ -70,7 +80,9 @@ function handleMessage(data) {
 
     case 'message':
       console.log(`\n🤖 Assistant: ${msg.content}\n`);
-      promptMessage();
+      if (!rl.closed) {
+        promptMessage();
+      }
       break;
 
     case 'error':
