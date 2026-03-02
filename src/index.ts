@@ -3,6 +3,7 @@ import path from 'path';
 
 import {
   ASSISTANT_NAME,
+  DATA_DIR,
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
@@ -620,8 +621,80 @@ const isDirectRun =
     new URL(`file://${process.argv[1]}`).pathname;
 
 if (isDirectRun) {
-  main().catch((err) => {
-    logger.error({ err }, 'Failed to start NanoClaw');
+  const command = process.argv[2];
+
+  if (command === 'device-list') {
+    // List paired WebSocket devices
+    const devicesPath = path.join(DATA_DIR, 'websocket-paired-devices.json');
+    if (fs.existsSync(devicesPath)) {
+      const devices = JSON.parse(fs.readFileSync(devicesPath, 'utf-8'));
+      console.log('Paired WebSocket devices:');
+      for (const [id, device] of Object.entries(devices)) {
+        console.log(`  - ${id} (paired at: ${(device as any).pairedAt})`);
+      }
+    } else {
+      console.log('No paired devices');
+    }
+    process.exit(0);
+  } else if (command === 'device-delete') {
+    const deviceId = process.argv[3];
+    if (!deviceId) {
+      console.log('Usage: nanoclaw device-delete <device-id>');
+      process.exit(1);
+    }
+    const devicesPath = path.join(DATA_DIR, 'websocket-paired-devices.json');
+    if (fs.existsSync(devicesPath)) {
+      const devices = JSON.parse(fs.readFileSync(devicesPath, 'utf-8'));
+      if (devices[deviceId]) {
+        delete devices[deviceId];
+        fs.writeFileSync(devicesPath, JSON.stringify(devices, null, 2));
+        console.log(`Deleted device: ${deviceId}`);
+
+        // Also delete device session directory
+        const sessionDir = path.join(DATA_DIR, 'sessions', `device-${deviceId}`);
+        if (fs.existsSync(sessionDir)) {
+          fs.rmSync(sessionDir, { recursive: true });
+          console.log(`Deleted session directory: ${sessionDir}`);
+        }
+      } else {
+        console.log(`Device not found: ${deviceId}`);
+      }
+    } else {
+      console.log('No paired devices');
+    }
+    process.exit(0);
+  } else if (command === 'device-clear') {
+    const devicesPath = path.join(DATA_DIR, 'websocket-paired-devices.json');
+    if (fs.existsSync(devicesPath)) {
+      fs.unlinkSync(devicesPath);
+      console.log('Cleared all paired devices');
+    }
+
+    // Delete all device session directories
+    const sessionsDir = path.join(DATA_DIR, 'sessions');
+    if (fs.existsSync(sessionsDir)) {
+      for (const dir of fs.readdirSync(sessionsDir)) {
+        if (dir.startsWith('device-')) {
+          const fullPath = path.join(sessionsDir, dir);
+          fs.rmSync(fullPath, { recursive: true });
+          console.log(`Deleted: ${fullPath}`);
+        }
+      }
+    }
+    console.log('Cleared all device data');
+    process.exit(0);
+  } else if (!command || command === 'start') {
+    main().catch((err) => {
+      logger.error({ err }, 'Failed to start NanoClaw');
+      process.exit(1);
+    });
+  } else {
+    console.log(`Unknown command: ${command}`);
+    console.log('Available commands:');
+    console.log('  device-list         - List paired WebSocket devices');
+    console.log('  device-delete <id> - Delete a specific device');
+    console.log('  device-clear       - Clear all device data');
+    console.log('  (no command)       - Start NanoClaw service');
     process.exit(1);
-  });
+  }
 }
