@@ -50,6 +50,14 @@ export interface NewMessage {
   timestamp: string;
   is_from_me?: boolean;
   is_bot_message?: boolean;
+  attachments?: Attachment[];
+}
+
+export interface Attachment {
+  filename: string;
+  path: string;
+  mimeType: string;
+  size: number;
 }
 
 export interface ScheduledTask {
@@ -87,6 +95,8 @@ export interface Channel {
   disconnect(): Promise<void>;
   // Optional: typing indicator. Channels that support it implement it.
   setTyping?(jid: string, isTyping: boolean): Promise<void>;
+  // Optional: send file to client. Channels that support it implement it.
+  sendFile?(jid: string, fileName: string, filePath: string, mimeType: string): Promise<void>;
 }
 
 // Callback type that channels use to deliver inbound messages

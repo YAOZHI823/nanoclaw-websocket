@@ -1,4 +1,5 @@
 import { Channel, NewMessage } from './types.js';
+import { logger } from './logger.js';
 
 export function escapeXml(s: string): string {
   if (!s) return '';
@@ -42,4 +43,22 @@ export function findChannel(
   jid: string,
 ): Channel | undefined {
   return channels.find((c) => c.ownsJid(jid));
+}
+
+export function routeOutboundFile(
+  channels: Channel[],
+  jid: string,
+  fileName: string,
+  filePath: string,
+  mimeType: string,
+): Promise<void> {
+  const channel = channels.find((c) => c.ownsJid(jid) && c.isConnected());
+  if (!channel) throw new Error(`No channel for JID: ${jid}`);
+
+  if (!channel.sendFile) {
+    logger.warn({ channel: channel.name, jid }, 'Channel does not support file transfer');
+    return Promise.resolve();
+  }
+
+  return channel.sendFile(jid, fileName, filePath, mimeType);
 }

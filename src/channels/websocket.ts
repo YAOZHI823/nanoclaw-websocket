@@ -13,6 +13,9 @@ import {
   WEBSOCKET_PAIRING_CODE_LENGTH,
   WEBSOCKET_PAIRING_EXPIRY_MS,
 } from '../config.js';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 
 export interface WebSocketChannelOpts {
   onMessage: OnInboundMessage;
@@ -28,14 +31,25 @@ interface PairedDevice {
 }
 
 // Protocol message types
-type ClientMessageType = 'pairing_request' | 'pairing_verify' | 'message' | 'ping';
+type ClientMessageType =
+  | 'pairing_request'
+  | 'pairing_verify'
+  | 'message'
+  | 'ping'
+  | 'file_start'
+  | 'file_chunk'
+  | 'file_end';
 type ServerMessageType =
   | 'pairing_challenge'
   | 'pairing_success'
   | 'pairing_failed'
   | 'message'
   | 'pong'
-  | 'error';
+  | 'error'
+  | 'file_start'
+  | 'file_chunk'
+  | 'file_end'
+  | 'file_received';
 
 interface ClientMessage {
   type: ClientMessageType;
@@ -44,6 +58,22 @@ interface ClientMessage {
   content?: string;
   to?: string;
   timestamp?: number;
+  // File transfer
+  fileId?: string;
+  fileName?: string;
+  fileSize?: number;
+  mimeType?: string;
+  chunk?: string;
+}
+
+interface FileTransfer {
+  fileId: string;
+  fileName: string;
+  mimeType: string;
+  totalSize: number;
+  receivedSize: number;
+  chunks: string[];
+  tempPath?: string;
 }
 
 interface ServerMessage {
@@ -72,6 +102,7 @@ export class WebSocketChannel implements Channel {
   private pairedDevices: Map<string, PairedDevice> = new Map();
   private pendingPairings: Map<string, PendingPairing> = new Map();
   private connected = false;
+  private pendingFileTransfers: Map<string, Map<string, FileTransfer>> = new Map(); // deviceId -> fileId -> FileTransfer
 
   private opts: WebSocketChannelOpts;
 
@@ -222,6 +253,15 @@ export class WebSocketChannel implements Channel {
         break;
       case 'ping':
         this.sendJson(ws, { type: 'pong' });
+        break;
+      case 'file_start':
+        this.handleFileStart(ws, msg);
+        break;
+      case 'file_chunk':
+        this.handleFileChunk(ws, msg);
+        break;
+      case 'file_end':
+        this.handleFileEnd(ws, msg);
         break;
       default:
         logger.warn({ type: msg.type }, 'Unknown message type');
@@ -421,5 +461,188 @@ export class WebSocketChannel implements Channel {
 
     this.opts.onMessage(chatJid, newMessage);
     logger.info({ deviceId, content: msg.content.slice(0, 50) }, 'Message received from device');
+  }
+
+  private handleFileStart(ws: WebSocket, msg: ClientMessage): void {
+    const deviceId = (ws as any).deviceId;
+    if (!deviceId) {
+      this.sendJson(ws, { type: 'file_received', fileId: msg.fileId, status: 'error', message: 'Not paired' });
+      return;
+    }
+
+    if (!msg.fileId || !msg.fileName || !msg.fileSize || !msg.mimeType) {
+      this.sendJson(ws, { type: 'file_received', fileId: msg.fileId, status: 'error', message: 'Missing file metadata' });
+      return;
+    }
+
+    // Initialize file transfer
+    if (!this.pendingFileTransfers.has(deviceId)) {
+      this.pendingFileTransfers.set(deviceId, new Map());
+    }
+
+    const fileTransfer: FileTransfer = {
+      fileId: msg.fileId!,
+      fileName: msg.fileName!,
+      mimeType: msg.mimeType!,
+      totalSize: msg.fileSize!,
+      receivedSize: 0,
+      chunks: [],
+    };
+
+    this.pendingFileTransfers.get(deviceId)!.set(msg.fileId!, fileTransfer);
+
+    logger.info({ deviceId, fileId: msg.fileId, fileName: msg.fileName, size: msg.fileSize }, 'File transfer started');
+  }
+
+  private handleFileChunk(ws: WebSocket, msg: ClientMessage): void {
+    const deviceId = (ws as any).deviceId;
+    if (!deviceId || !msg.fileId || !msg.chunk) return;
+
+    const deviceFiles = this.pendingFileTransfers.get(deviceId);
+    if (!deviceFiles) return;
+
+    const fileTransfer = deviceFiles.get(msg.fileId);
+    if (!fileTransfer) return;
+
+    fileTransfer.chunks.push(msg.chunk);
+    fileTransfer.receivedSize += Buffer.from(msg.chunk, 'base64').length;
+
+    logger.debug({ fileId: msg.fileId, received: fileTransfer.receivedSize, total: fileTransfer.totalSize }, 'File chunk received');
+  }
+
+  private async handleFileEnd(ws: WebSocket, msg: ClientMessage): Promise<void> {
+    const deviceId = (ws as any).deviceId;
+    if (!deviceId || !msg.fileId) {
+      this.sendJson(ws, { type: 'file_received', fileId: msg.fileId, status: 'error', message: 'Not paired' });
+      return;
+    }
+
+    const deviceFiles = this.pendingFileTransfers.get(deviceId);
+    if (!deviceFiles) {
+      this.sendJson(ws, { type: 'file_received', fileId: msg.fileId, status: 'error', message: 'No pending file transfer' });
+      return;
+    }
+
+    const fileTransfer = deviceFiles.get(msg.fileId);
+    if (!fileTransfer) {
+      this.sendJson(ws, { type: 'file_received', fileId: msg.fileId, status: 'error', message: 'File not found' });
+      return;
+    }
+
+    try {
+      // Combine chunks and save to temp file
+      const tempDir = path.join(os.tmpdir(), 'nanoclaw-files');
+      if (!fs.existsSync(tempDir)) {
+        fs.mkdirSync(tempDir, { recursive: true });
+      }
+
+      const filePath = path.join(tempDir, `${msg.fileId}-${fileTransfer.fileName}`);
+      const fileBuffer = Buffer.from(fileTransfer.chunks.join(''), 'base64');
+      fs.writeFileSync(filePath, fileBuffer);
+
+      fileTransfer.tempPath = filePath;
+
+      logger.info({ deviceId, fileId: msg.fileId, fileName: fileTransfer.fileName, size: fileTransfer.receivedSize }, 'File received successfully');
+
+      // Send success response
+      this.sendJson(ws, { type: 'file_received', fileId: msg.fileId, status: 'ok' });
+
+      // Notify about chat metadata
+      const chatJid = `device-${deviceId}@nanoclaw`;
+      this.opts.onChatMetadata(
+        chatJid,
+        new Date().toISOString(),
+        this.pairedDevices.get(deviceId)?.displayName,
+        'websocket',
+        false,
+      );
+
+      // Deliver file message to AI
+      const newMessage: NewMessage = {
+        id: randomUUID(),
+        chat_jid: chatJid,
+        sender: `device-${deviceId}`,
+        sender_name: this.pairedDevices.get(deviceId)?.displayName || deviceId,
+        content: `[发送了文件: ${fileTransfer.fileName} (${this.formatFileSize(fileTransfer.totalSize)})]`,
+        timestamp: new Date().toISOString(),
+        is_from_me: false,
+        attachments: [
+          {
+            filename: fileTransfer.fileName,
+            path: filePath,
+            mimeType: fileTransfer.mimeType,
+            size: fileTransfer.totalSize,
+          },
+        ],
+      };
+
+      this.opts.onMessage(chatJid, newMessage);
+
+      // Clean up transfer state (but keep temp file for the attachment)
+      deviceFiles.delete(msg.fileId);
+    } catch (err) {
+      logger.error({ err, fileId: msg.fileId }, 'Failed to save file');
+      this.sendJson(ws, { type: 'file_received', fileId: msg.fileId, status: 'error', message: 'Failed to save file' });
+      deviceFiles.delete(msg.fileId);
+    }
+  }
+
+  private formatFileSize(bytes: number): string {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  // Send file to client (called from router or other parts)
+  async sendFile(jid: string, fileName: string, filePath: string, mimeType: string): Promise<void> {
+    const deviceId = jid.replace(/^device-/, '').replace(/@nanoclaw$/, '');
+    const client = this.clients.get(deviceId);
+
+    if (!client || client.readyState !== WebSocket.OPEN) {
+      logger.warn({ jid, deviceId }, 'Device not connected, file not sent');
+      return;
+    }
+
+    try {
+      const fileBuffer = fs.readFileSync(filePath);
+      const fileSize = fileBuffer.length;
+      const fileId = randomUUID();
+      const base64 = fileBuffer.toString('base64');
+
+      // Send file_start
+      this.sendJson(client, {
+        type: 'file_start',
+        fileId,
+        fileName,
+        fileSize,
+        mimeType,
+      });
+
+      // Split into chunks (16KB per chunk for WebSocket)
+      const chunkSize = 16 * 1024;
+      const totalChunks = Math.ceil(base64.length / chunkSize);
+
+      for (let i = 0; i < totalChunks; i++) {
+        const chunk = base64.slice(i * chunkSize, (i + 1) * chunkSize);
+        this.sendJson(client, {
+          type: 'file_chunk',
+          fileId,
+          chunk,
+        });
+
+        // Small delay to avoid overwhelming the WebSocket
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      // Send file_end
+      this.sendJson(client, {
+        type: 'file_end',
+        fileId,
+      });
+
+      logger.info({ jid, fileName, size: fileSize }, 'File sent to device');
+    } catch (err) {
+      logger.error({ err, jid, fileName }, 'Failed to send file to device');
+    }
   }
 }

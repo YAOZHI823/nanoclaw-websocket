@@ -291,11 +291,29 @@ function readSecrets(): Record<string, string> {
 function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
+  chatJid?: string,
+  groupFolder?: string,
+  isMain?: boolean,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
+
+  // Pass chat JID for file transfer commands
+  if (chatJid) {
+    args.push('-e', `NANOCLAW_CHAT_JID=${chatJid}`);
+  }
+
+  // Pass group folder
+  if (groupFolder) {
+    args.push('-e', `NANOCLAW_GROUP_FOLDER=${groupFolder}`);
+  }
+
+  // Pass isMain flag
+  if (isMain !== undefined) {
+    args.push('-e', `NANOCLAW_IS_MAIN=${isMain ? '1' : '0'}`);
+  }
 
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),
@@ -334,7 +352,7 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName);
+  const containerArgs = buildContainerArgs(mounts, containerName, input.chatJid, input.groupFolder, input.isMain);
 
   logger.debug(
     {

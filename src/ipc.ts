@@ -11,12 +11,13 @@ import {
 } from './config.js';
 import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
-import { isValidGroupFolder } from './group-folder.js';
+import { isValidGroupFolder, resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
+  sendFile: (jid: string, fileName: string, filePath: string, mimeType: string) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroupMetadata: (force: boolean) => Promise<void>;
@@ -88,6 +89,44 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   logger.warn(
                     { chatJid: data.chatJid, sourceGroup },
                     'Unauthorized IPC message attempt blocked',
+                  );
+                }
+              } else if (data.type === 'send_file' && data.chatJid && data.fileName && data.filePath) {
+                // Send file to client
+                // Allow if:
+                // 1. isMain (main group can send to anyone)
+                // 2. Target is in registeredGroups and matches source group
+                // 3. Target is a WebSocket device (device-*@nanoclaw pattern) - always allow
+                const targetGroup = registeredGroups[data.chatJid];
+                const isWebSocketDevice = /^device-[^@]+@nanoclaw$/.test(data.chatJid);
+
+                if (
+                  isMain ||
+                  (targetGroup && targetGroup.folder === sourceGroup) ||
+                  isWebSocketDevice
+                ) {
+                  const mimeType = data.mimeType || 'application/octet-stream';
+
+                  // Convert container path to host path
+                  // Container path: /workspace/group/xxx.md
+                  // Host path: {DATA_DIR}/sessions/{groupFolder}/xxx.md
+                  let hostFilePath = data.filePath;
+                  if (data.filePath.startsWith('/workspace/group/')) {
+                    const relativePath = data.filePath.replace('/workspace/group/', '');
+                    const groupHostDir = resolveGroupFolderPath(sourceGroup);
+                    hostFilePath = path.join(groupHostDir, relativePath);
+                  }
+
+                  logger.info({ hostFilePath, exists: fs.existsSync(hostFilePath) }, 'Sending file to client');
+                  await deps.sendFile(data.chatJid, data.fileName, hostFilePath, mimeType);
+                  logger.info(
+                    { chatJid: data.chatJid, fileName: data.fileName, sourceGroup },
+                    'IPC file sent',
+                  );
+                } else {
+                  logger.warn(
+                    { chatJid: data.chatJid, sourceGroup },
+                    'Unauthorized IPC file send attempt blocked',
                   );
                 }
               }

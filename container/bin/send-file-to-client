@@ -1,0 +1,81 @@
+#!/bin/bash
+# Send file to WebSocket client via IPC
+# Usage: send-file-to-client <file-path> [display-name]
+#
+# This command sends a file to the WebSocket device that triggered this conversation.
+# The target device JID is automatically determined from NANOCLAW_CHAT_JID environment variable.
+
+set -e
+
+FILE_PATH="$1"
+DISPLAY_NAME="$2"
+
+if [ -z "$FILE_PATH" ]; then
+  echo "Usage: send-file-to-client <file-path> [display-name]"
+  echo ""
+  echo "Arguments:"
+  echo "  file-path      Path to the file to send"
+  echo "  display-name   (Optional) Display name for the file"
+  echo ""
+  echo "The target device is automatically determined from the current conversation."
+  exit 1
+fi
+
+if [ ! -f "$FILE_PATH" ]; then
+  echo "Error: File not found: $FILE_PATH"
+  exit 1
+fi
+
+# Get group folder from environment or use default
+GROUP_FOLDER="${NANOCLAW_GROUP_FOLDER:-main}"
+IPC_DIR="/workspace/ipc/messages"
+
+mkdir -p "$IPC_DIR"
+
+# Get the filename
+if [ -z "$DISPLAY_NAME" ]; then
+  DISPLAY_NAME=$(basename "$FILE_PATH")
+fi
+
+# Use NANOCLAW_CHAT_JID (the chat that triggered this conversation)
+TARGET_JID="${NANOCLAW_CHAT_JID}"
+
+if [ -z "$TARGET_JID" ]; then
+  echo "Error: NANOCLAW_CHAT_JID is not set. This command must be run inside a container."
+  exit 1
+fi
+
+# Detect mime type
+case "${FILE_PATH##*.}" in
+  md|txt) MIME_TYPE="text/markdown" ;;
+  json) MIME_TYPE="application/json" ;;
+  pdf) MIME_TYPE="application/pdf" ;;
+  html|htm) MIME_TYPE="text/html" ;;
+  css) MIME_TYPE="text/css" ;;
+  js) MIME_TYPE="application/javascript" ;;
+  py) MIME_TYPE="text/x-python" ;;
+  xml) MIME_TYPE="application/xml" ;;
+  zip) MIME_TYPE="application/zip" ;;
+  jpg|jpeg) MIME_TYPE="image/jpeg" ;;
+  png) MIME_TYPE="image/png" ;;
+  gif) MIME_TYPE="image/gif" ;;
+  svg) MIME_TYPE="image/svg+xml" ;;
+  mp3) MIME_TYPE="audio/mpeg" ;;
+  mp4) MIME_TYPE="video/mp4" ;;
+  *) MIME_TYPE="application/octet-stream" ;;
+esac
+
+# Create IPC message
+IPC_FILE="${IPC_DIR}/file-$(date +%s)-$$-${RANDOM}.json"
+
+cat > "$IPC_FILE" << EOF
+{
+  "type": "send_file",
+  "chatJid": "$TARGET_JID",
+  "fileName": "$DISPLAY_NAME",
+  "filePath": "$FILE_PATH",
+  "mimeType": "$MIME_TYPE"
+}
+EOF
+
+echo "File queued for delivery: $DISPLAY_NAME -> $TARGET_JID"

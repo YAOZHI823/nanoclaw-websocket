@@ -375,6 +375,88 @@ html, body {
 .send-btn:disabled {
   background: #ccc;
 }
+
+/* 文件传输 */
+.file-btn {
+  padding: 12px;
+  font-size: 18px;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+#file-input {
+  display: none;
+}
+
+.upload-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #f0f0f0;
+  border-radius: 8px;
+  margin: 8px 0;
+  font-size: 13px;
+}
+
+.progress-bar {
+  flex: 1;
+  height: 4px;
+  background: #ddd;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: var(--primary-color);
+  transition: width 0.2s;
+}
+
+/* 文件消息 */
+.file-attachment {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: #f0f0f0;
+  border-radius: 12px;
+  margin: 8px 0;
+}
+
+.file-icon {
+  font-size: 32px;
+}
+
+.file-info {
+  flex: 1;
+}
+
+.file-name {
+  font-weight: 600;
+  font-size: 14px;
+  word-break: break-all;
+}
+
+.file-size {
+  font-size: 12px;
+  color: #8e8e93;
+}
+
+.download-btn {
+  padding: 8px 16px;
+  font-size: 14px;
+  background: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.download-btn:active {
+  opacity: 0.7;
+}
   </style>
 </head>
 <body>
@@ -425,6 +507,8 @@ html, body {
       </div>
 
       <div class="input-area">
+        <button class="file-btn" id="file-btn" title="发送文件">📎</button>
+        <input type="file" id="file-input">
         <textarea id="message-input" placeholder="发送消息... (Enter发送, Shift+Enter换行)" rows="1" autocomplete="off" onkeydown="handleEnter(event)"></textarea>
         <button class="send-btn" id="send-btn">发送</button>
       </div>
@@ -466,6 +550,8 @@ const elements = {
   loadingMore: document.getElementById('loading-more'),
   messageInput: document.getElementById('message-input'),
   sendBtn: document.getElementById('send-btn'),
+  fileBtn: document.getElementById('file-btn'),
+  fileInput: document.getElementById('file-input'),
 };
 
 // 初始化
@@ -556,11 +642,78 @@ function createMessageElement(msg) {
   content.className = 'message-content';
   content.innerHTML = parseMarkdown(msg.content);
 
+  div.appendChild(content);
+
+  // 如果有文件附件
+  if (msg.file && msg.file.fileName) {
+    const fileEl = document.createElement('div');
+    fileEl.className = 'file-attachment';
+
+    const icon = document.createElement('span');
+    icon.className = 'file-icon';
+    icon.textContent = getFileIcon(msg.file.fileName);
+
+    const info = document.createElement('div');
+    info.className = 'file-info';
+
+    const nameEl = document.createElement('div');
+    nameEl.className = 'file-name';
+    nameEl.textContent = msg.file.fileName;
+
+    info.appendChild(nameEl);
+
+    const downloadBtn = document.createElement('button');
+    downloadBtn.className = 'download-btn';
+    downloadBtn.textContent = '下载';
+
+    // 优先使用 base64 数据，否则使用 url
+    let fileData = '';
+    let mimeType = msg.file.mimeType || 'application/octet-stream';
+
+    if (msg.file.base64) {
+      // 直接使用 base64 数据
+      fileData = msg.file.base64;
+      downloadBtn.dataset.base64 = fileData;
+      downloadBtn.dataset.mimeType = mimeType;
+    } else if (msg.file.url && msg.file.url.startsWith('blob:')) {
+      // 尝试从 url 获取（可能已失效）
+      fileData = msg.file.url;
+    }
+
+    downloadBtn.dataset.fileName = msg.file.fileName;
+
+    downloadBtn.onclick = function() {
+      const base64 = this.dataset.base64;
+      const fileName = this.dataset.fileName;
+      const mime = this.dataset.mimeType;
+
+      if (base64) {
+        // 从 base64 重新创建 blob URL
+        const blob = base64ToBlob(base64, mime);
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        a.click();
+      } else {
+        // 尝试使用存储的 URL
+        const a = document.createElement('a');
+        a.href = fileData;
+        a.download = fileName;
+        a.click();
+      }
+    };
+
+    fileEl.appendChild(icon);
+    fileEl.appendChild(info);
+    fileEl.appendChild(downloadBtn);
+    div.appendChild(fileEl);
+  }
+
   const time = document.createElement('div');
   time.className = 'message-time';
   time.textContent = formatTime(msg.timestamp);
 
-  div.appendChild(content);
   div.appendChild(time);
   return div;
 }
@@ -669,6 +822,10 @@ function setupEventListeners() {
 
   // textarea 自动高度
   elements.messageInput.addEventListener('input', autoResizeTextarea);
+
+  // 文件上传
+  elements.fileBtn.addEventListener('click', () => elements.fileInput.click());
+  elements.fileInput.addEventListener('change', handleFileSelect);
 }
 
 // Enter 键处理
@@ -776,6 +933,119 @@ function showTyping() {
   div.appendChild(content);
   elements.messagesList.appendChild(div);
   scrollToBottom();
+}
+
+// 文件上传处理
+let pendingFile = null;
+
+function handleFileSelect(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  // 显示上传进度
+  showUploadProgress(file.name, file.size);
+
+  // 读取文件并发送
+  const reader = new FileReader();
+  reader.onload = function(event) {
+    const base64 = event.target.result.split(',')[1];
+    sendFile(file.name, file.size, file.type, base64);
+  };
+  reader.readAsDataURL(file);
+
+  // 清空 input 以便再次选择同一文件
+  e.target.value = '';
+}
+
+function showUploadProgress(fileName, fileSize) {
+  const div = document.createElement('div');
+  div.className = 'message user';
+  div.id = 'upload-progress';
+
+  const progressEl = document.createElement('div');
+  progressEl.className = 'upload-progress';
+
+  const fileNameEl = document.createElement('span');
+  fileNameEl.textContent = '上传中: ' + fileName;
+
+  const progressBar = document.createElement('div');
+  progressBar.className = 'progress-bar';
+
+  const progressFill = document.createElement('div');
+  progressFill.className = 'progress-bar-fill';
+  progressFill.style.width = '0%';
+  progressFill.id = 'progress-fill';
+
+  progressBar.appendChild(progressFill);
+  progressEl.appendChild(fileNameEl);
+  progressEl.appendChild(progressBar);
+  div.appendChild(progressEl);
+  elements.messagesList.appendChild(div);
+  scrollToBottom();
+}
+
+function updateUploadProgress(percent) {
+  const fill = document.getElementById('progress-fill');
+  if (fill) {
+    fill.style.width = percent + '%';
+  }
+}
+
+function hideUploadProgress() {
+  const progress = document.getElementById('upload-progress');
+  if (progress) {
+    progress.remove();
+  }
+}
+
+async function sendFile(fileName, fileSize, mimeType, base64) {
+  const fileId = 'file-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+  const chunkSize = 16 * 1024; // 16KB chunks
+  const totalChunks = Math.ceil(base64.length / chunkSize);
+
+  // 发送 file_start
+  send({
+    type: 'file_start',
+    fileId,
+    fileName,
+    fileSize,
+    mimeType,
+  });
+
+  // 发送 chunks
+  for (let i = 0; i < totalChunks; i++) {
+    const chunk = base64.slice(i * chunkSize, (i + 1) * chunkSize);
+    send({
+      type: 'file_chunk',
+      fileId,
+      chunk,
+    });
+
+    // 更新进度
+    const progress = Math.round(((i + 1) / totalChunks) * 100);
+    updateUploadProgress(progress);
+
+    // 小延迟避免阻塞
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+
+  // 发送 file_end
+  send({
+    type: 'file_end',
+    fileId,
+  });
+
+  // 保存待确认的文件
+  pendingFile = { fileId, fileName, fileSize };
+
+  // 显示用户消息（带文件信息）
+  const msg = {
+    from: 'user',
+    content: '[发送了文件: ' + fileName + ' (' + formatFileSize(fileSize) + ')]',
+    timestamp: Date.now(),
+  };
+  addMessageToUI(msg);
+  saveMessage(msg);
 }
 
 // 隐藏正在输入
@@ -909,7 +1179,219 @@ function handleMessage(msg) {
     case 'pong':
       // 心跳响应
       break;
+
+    case 'file_received':
+      // 文件上传确认
+      hideUploadProgress();
+      if (msg.status === 'ok') {
+        // File uploaded successfully
+      } else {
+        alert('文件上传失败: ' + msg.message);
+      }
+      pendingFile = null;
+      break;
+
+    case 'file_start':
+      handleIncomingFileStart(msg);
+      break;
+
+    case 'file_chunk':
+      handleIncomingFileChunk(msg);
+      break;
+
+    case 'file_end':
+      handleIncomingFileEnd(msg);
+      break;
   }
+}
+
+// 接收文件
+let incomingFile = null;
+
+function handleIncomingFileStart(msg) {
+  incomingFile = {
+    fileId: msg.fileId,
+    fileName: msg.fileName,
+    fileSize: msg.fileSize,
+    mimeType: msg.mimeType,
+    chunks: [],
+    receivedSize: 0,
+  };
+
+  // 显示接收进度
+  showDownloadProgress(msg.fileName, msg.fileSize);
+}
+
+function handleIncomingFileChunk(msg) {
+  if (!incomingFile) return;
+
+  incomingFile.chunks.push(msg.chunk);
+  incomingFile.receivedSize += atob(msg.chunk).length;
+
+  // 更新进度
+  const progress = Math.round((incomingFile.receivedSize / incomingFile.fileSize) * 100);
+  updateDownloadProgress(progress);
+}
+
+function handleIncomingFileEnd(msg) {
+  if (!incomingFile) {
+    return;
+  }
+
+  // 合并 chunks
+  const base64 = incomingFile.chunks.join('');
+
+  // 创建下载
+  const blob = base64ToBlob(base64, incomingFile.mimeType);
+  const url = URL.createObjectURL(blob);
+
+  // 显示文件消息
+  const div = document.createElement('div');
+  div.className = 'message assistant';
+
+  const fileEl = document.createElement('div');
+  fileEl.className = 'file-attachment';
+
+  const icon = document.createElement('span');
+  icon.className = 'file-icon';
+  icon.textContent = getFileIcon(incomingFile.fileName);
+
+  const info = document.createElement('div');
+  info.className = 'file-info';
+
+  const nameEl = document.createElement('div');
+  nameEl.className = 'file-name';
+  nameEl.textContent = incomingFile.fileName;
+
+  const sizeEl = document.createElement('div');
+  sizeEl.className = 'file-size';
+  sizeEl.textContent = formatFileSize(incomingFile.fileSize);
+
+  info.appendChild(nameEl);
+  info.appendChild(sizeEl);
+
+  const downloadBtn = document.createElement('button');
+  downloadBtn.className = 'download-btn';
+  downloadBtn.textContent = '下载';
+  // Store base64 data in button for later access
+  downloadBtn.dataset.base64 = base64;
+  downloadBtn.dataset.mimeType = incomingFile.mimeType;
+  downloadBtn.dataset.fileName = incomingFile.fileName;
+  downloadBtn.onclick = function() {
+    const base64 = this.dataset.base64;
+    const mime = this.dataset.mimeType;
+    const fileName = this.dataset.fileName;
+    const blob = base64ToBlob(base64, mime);
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = fileName;
+    a.click();
+  };
+
+  fileEl.appendChild(icon);
+  fileEl.appendChild(info);
+  fileEl.appendChild(downloadBtn);
+  div.appendChild(fileEl);
+
+  const time = document.createElement('div');
+  time.className = 'message-time';
+  time.textContent = formatTime(Date.now());
+
+  div.appendChild(time);
+  elements.messagesList.appendChild(div);
+  scrollToBottom();
+
+  // 保存消息 - 存储 base64 数据而不是 blob URL（blob URL 会在页面刷新后失效）
+  const msgData = {
+    from: 'assistant',
+    content: '[收到文件: ' + incomingFile.fileName + ']',
+    file: {
+      fileName: incomingFile.fileName,
+      mimeType: incomingFile.mimeType,
+      base64: base64,  // 存储 base64 数据
+    },
+    timestamp: Date.now(),
+  };
+  saveMessage(msgData);
+
+  hideDownloadProgress();
+  incomingFile = null;
+}
+
+function showDownloadProgress(fileName, fileSize) {
+  const div = document.createElement('div');
+  div.className = 'message assistant';
+  div.id = 'download-progress';
+
+  const progressEl = document.createElement('div');
+  progressEl.className = 'upload-progress';
+
+  const fileNameEl = document.createElement('span');
+  fileNameEl.textContent = '接收中: ' + fileName;
+
+  const progressBar = document.createElement('div');
+  progressBar.className = 'progress-bar';
+
+  const progressFill = document.createElement('div');
+  progressFill.className = 'progress-bar-fill';
+  progressFill.style.width = '0%';
+  progressFill.id = 'download-progress-fill';
+
+  progressBar.appendChild(progressFill);
+  progressEl.appendChild(fileNameEl);
+  progressEl.appendChild(progressBar);
+  div.appendChild(progressEl);
+  elements.messagesList.appendChild(div);
+  scrollToBottom();
+}
+
+function updateDownloadProgress(percent) {
+  const fill = document.getElementById('download-progress-fill');
+  if (fill) {
+    fill.style.width = percent + '%';
+  }
+}
+
+function hideDownloadProgress() {
+  const progress = document.getElementById('download-progress');
+  if (progress) {
+    progress.remove();
+  }
+}
+
+function getFileIcon(fileName) {
+  const ext = fileName.split('.').pop().toLowerCase();
+  const icons = {
+    pdf: '📄',
+    doc: '📝', docx: '📝',
+    xls: '📊', xlsx: '📊',
+    ppt: '📽️', pptx: '📽️',
+    jpg: '🖼️', jpeg: '🖼️', png: '🖼️', gif: '🖼️', webp: '🖼️',
+    mp3: '🎵', wav: '🎵', ogg: '🎵',
+    mp4: '🎬', mov: '🎬', avi: '🎬',
+    zip: '📦', rar: '📦', '7z': '📦',
+    txt: '📃',
+    js: '📜', ts: '📜', py: '📜', java: '📜', go: '📜', rs: '📜',
+    html: '🌐', css: '🎨', json: '📋', xml: '📋',
+  };
+  return icons[ext] || '📁';
+}
+
+function base64ToBlob(base64, mimeType) {
+  const byteCharacters = atob(base64);
+  const byteNumbers = new Array(byteCharacters.length);
+  for (let i = 0; i < byteCharacters.length; i++) {
+    byteNumbers[i] = byteCharacters.charCodeAt(i);
+  }
+  const byteArray = new Uint8Array(byteNumbers);
+  return new Blob([byteArray], { type: mimeType });
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
 // 心跳
