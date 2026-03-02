@@ -16,6 +16,7 @@ import {
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { resolveGroupFolderPath } from '../group-folder.js';
 
 export interface WebSocketChannelOpts {
   onMessage: OnInboundMessage;
@@ -464,7 +465,27 @@ export class WebSocketChannel implements Channel {
   }
 
   private handleFileStart(ws: WebSocket, msg: ClientMessage): void {
-    const deviceId = (ws as any).deviceId;
+    let deviceId = (ws as any).deviceId;
+
+    // Auto-pair if device is registered in database
+    if (!deviceId) {
+      // Try to get deviceId from the message or use tempId
+      const chatJid = `device-${(ws as any).tempId}@nanoclaw`;
+      const registeredGroups = this.opts.registeredGroups();
+      if (registeredGroups[chatJid]) {
+        deviceId = (ws as any).tempId;
+        // Auto-pair
+        this.pairedDevices.set(deviceId, {
+          deviceId,
+          displayName: deviceId,
+          pairedAt: new Date().toISOString(),
+        });
+        this.clients.delete((ws as any).tempId);
+        this.clients.set(deviceId, ws);
+        (ws as any).deviceId = deviceId;
+      }
+    }
+
     if (!deviceId) {
       this.sendJson(ws, { type: 'file_received', fileId: msg.fileId, status: 'error', message: 'Not paired' });
       return;
@@ -530,13 +551,16 @@ export class WebSocketChannel implements Channel {
     }
 
     try {
-      // Combine chunks and save to temp file
-      const tempDir = path.join(os.tmpdir(), 'nanoclaw-files');
-      if (!fs.existsSync(tempDir)) {
-        fs.mkdirSync(tempDir, { recursive: true });
+      // Save to device group's folder so container can access it
+      const groupFolder = `device-${deviceId}`;
+      const groupDir = resolveGroupFolderPath(groupFolder);
+      const uploadDir = path.join(groupDir, 'uploads');
+
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
       }
 
-      const filePath = path.join(tempDir, `${msg.fileId}-${fileTransfer.fileName}`);
+      const filePath = path.join(uploadDir, `${msg.fileId}-${fileTransfer.fileName}`);
       const fileBuffer = Buffer.from(fileTransfer.chunks.join(''), 'base64');
       fs.writeFileSync(filePath, fileBuffer);
 
