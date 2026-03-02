@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import Database from 'better-sqlite3';
 
 import {
   ASSISTANT_NAME,
@@ -7,6 +8,7 @@ import {
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
+  STORE_DIR,
   TRIGGER_PATTERN,
 } from './config.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
@@ -678,16 +680,17 @@ if (isDirectRun) {
         if (!deleted) {
           console.log(`Device not found: ${deviceId}`);
         } else {
-          // Also delete messages for this device
+          // Delete messages for this device using direct SQLite connection
           try {
-            // Try to delete messages (db might not be initialized in CLI mode)
-            const { db } = await import('./db.js');
-            if (db) {
-              const result = db.prepare(`DELETE FROM messages WHERE chat_jid = ?`).run(chatJid);
+            const dbPath = path.join(STORE_DIR, 'messages.db');
+            if (fs.existsSync(dbPath)) {
+              const db = new Database(dbPath);
+              const result = db.prepare(`DELETE FROM messages WHERE chat_jid LIKE ?`).run(`${normalizedId}%`);
               console.log(`Deleted ${result.changes} message(s) for ${chatJid}`);
+              db.close();
             }
           } catch (err) {
-            console.log(`Note: Could not delete messages (db not initialized)`);
+            console.log(`Note: Could not delete messages: ${err}`);
           }
         }
       } else {
@@ -713,6 +716,20 @@ if (isDirectRun) {
         }
       }
     }
+
+    // Delete all device messages
+    try {
+      const dbPath = path.join(STORE_DIR, 'messages.db');
+      if (fs.existsSync(dbPath)) {
+        const db = new Database(dbPath);
+        const result = db.prepare(`DELETE FROM messages WHERE chat_jid LIKE 'device-%@nanoclaw'`).run();
+        console.log(`Deleted ${result.changes} device message(s)`);
+        db.close();
+      }
+    } catch (err) {
+      console.log(`Note: Could not delete messages: ${err}`);
+    }
+
     console.log('Cleared all device data');
     process.exit(0);
   } else if (!command || command === 'start') {
