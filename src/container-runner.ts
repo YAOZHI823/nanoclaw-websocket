@@ -161,6 +161,69 @@ function buildVolumeMounts(
       fs.cpSync(srcDir, dstDir, { recursive: true });
     }
   }
+
+  // Sync MCP servers: copy mcp directory to group and create .mcp.json
+  const mcpSrc = path.join(process.cwd(), 'mcp');
+  const mcpDst = path.join(groupSessionsDir, 'mcp');
+  if (fs.existsSync(mcpSrc)) {
+    // Copy mcp directory to group's session folder
+    if (fs.existsSync(mcpDst)) {
+      fs.rmSync(mcpDst, { recursive: true });
+    }
+    fs.cpSync(mcpSrc, mcpDst, { recursive: true });
+
+    // Create .mcp.json in group folder with container paths
+    const mcpConfigPath = path.join(groupDir, '.mcp.json');
+    const mcpServers: Record<string, unknown> = {};
+
+    // Read source .mcp.json to get MCP server configurations
+    const sourceMcpConfigPath = path.join(process.cwd(), '.mcp.json');
+    if (fs.existsSync(sourceMcpConfigPath)) {
+      try {
+        const sourceConfig = JSON.parse(fs.readFileSync(sourceMcpConfigPath, 'utf-8'));
+        const sourceServers = sourceConfig.mcpServers as Record<string, unknown> || {};
+
+        // Transform paths from host to container paths
+        for (const [serverName, serverConfig] of Object.entries(sourceServers)) {
+          if (serverConfig && typeof serverConfig === 'object') {
+            const config = serverConfig as Record<string, unknown>;
+            const args = config.args as string[] || [];
+
+            // Transform paths in args from host to container paths
+            const transformedArgs = args.map((arg) => {
+              if (typeof arg === 'string' && arg.includes('/Users/yao/')) {
+                // Replace host path with container path
+                return arg.replace(/\/Users\/yao\/Downloads\/nanoclaw\//g, '/workspace/group/');
+              }
+              return arg;
+            });
+
+            mcpServers[serverName] = {
+              ...config,
+              args: transformedArgs,
+            };
+          }
+        }
+      } catch (err) {
+        console.warn(`[container-runner] Failed to read source .mcp.json: ${err}`);
+      }
+    }
+
+    // Always add fetch MCP if the dist exists (for convenience)
+    // Note: groupSessionsDir is mounted to /home/node/.claude/
+    const fetchDistPath = path.join(mcpDst, 'fetch-mcp', 'dist', 'index.js');
+    if (fs.existsSync(fetchDistPath) && !mcpServers.fetch) {
+      mcpServers.fetch = {
+        command: 'node',
+        args: ['/home/node/.claude/mcp/fetch-mcp/dist/index.js'],
+      };
+    }
+
+    // Write MCP config to .claude.json in groupSessionsDir (mounted to /home/node/.claude/)
+    const claudeJsonPath = path.join(groupSessionsDir, '.claude.json');
+    fs.writeFileSync(claudeJsonPath, JSON.stringify({ mcpServers }, null, 2) + '\n');
+  }
+
   mounts.push({
     hostPath: groupSessionsDir,
     containerPath: '/home/node/.claude',
