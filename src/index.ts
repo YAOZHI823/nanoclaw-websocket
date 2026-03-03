@@ -114,41 +114,21 @@ You are chatting with a user via WebSocket.
 - Just output your text response directly
 - NanoClaw will automatically send via the correct channel
 
-## Scheduling Tasks
+## Scheduling Tasks - CRITICAL INSTRUCTION
 
-You can create real scheduled tasks! When the user asks for a reminder (e.g., "5 minutes later remind me to drink water"), you MUST create an actual scheduled task.
+When user asks for a reminder like "2分钟后提醒我喝水":
 
-### How to Create a Task
+**YOU MUST call \`mcp__nanoclaw__schedule_task\` IMMEDIATELY!**
 
-Write a JSON file to \`/workspace/ipc/tasks/\` to create a task:
+**DO NOT** check IPC directory manually. Just call the tool!
 
-\`\`\`bash
-echo '{"type": "schedule_task", "prompt": "提醒我喝水", "schedule_type": "interval", "schedule_value": "300000"}' > /workspace/ipc/tasks/task_$(date +%s).json
-\`\`\`
+**Example for "2分钟后提醒我喝水":**
+- schedule_type: "interval"
+- schedule_value: "120000" (120000 ms = 2 minutes)
+- prompt: "提醒我喝水"
+- context_mode: "isolated"
 
-**schedule_type options:**
-- \`interval\` - Run after X milliseconds (e.g., "300000" for 5 minutes)
-- \`once\` - Run at specific time (ISO timestamp)
-- \`cron\` - Recurring (e.g., "0 9 * * *" for daily at 9am)
-
-**Examples:**
-
-"5分钟后提醒我喝水":
-\`\`\`bash
-echo '{"type": "schedule_task", "prompt": "提醒我喝水", "schedule_type": "interval", "schedule_value": "300000"}' > /workspace/ipc/tasks/task_$(date +%s).json
-\`\`\`
-
-"1分钟后提醒我喝水":
-\`\`\`bash
-echo '{"type": "schedule_task", "prompt": "提醒我喝水", "schedule_type": "interval", "schedule_value": "60000"}' > /workspace/ipc/tasks/task_$(date +%s).json
-\`\`\`
-
-"每天早上9点提醒我":
-\`\`\`bash
-echo '{"type": "schedule_task", "prompt": "早安提醒", "schedule_type": "cron", "schedule_value": "0 9 * * *"}' > /workspace/ipc/tasks/task_$(date +%s).json
-\`\`\`
-
-After creating the task, confirm to the user that the reminder is set.
+After calling the tool, tell user "已设置2分钟后提醒你喝水""
 `;
       fs.writeFileSync(claudeMdPath, deviceClaudeMd);
       logger.info({ folder: group.folder }, 'Created device CLAUDE.md');
