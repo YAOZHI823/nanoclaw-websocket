@@ -49,13 +49,14 @@ claude
 
 ## 功能支持
 
-- **WhatsApp 输入/输出** - 通过手机给 Claude 发消息
+- **消息通道** - 通过手机给 Claude 发消息。支持 WhatsApp、Telegram、Discord、Slack、Signal、WebSocket（自定义移动/网页应用）和headless模式。
 - **隔离的群组上下文** - 每个群组都拥有独立的 `CLAUDE.md` 记忆和隔离的文件系统。它们在各自的容器沙箱中运行，且仅挂载所需的文件系统。
 - **主频道** - 您的私有频道（self-chat），用于管理控制；其他所有群组都完全隔离
 - **计划任务** - 运行 Claude 的周期性作业，并可以给您回发消息
 - **网络访问** - 搜索和抓取网页内容
 - **容器隔离** - 智能体在 Apple Container (macOS) 或 Docker (macOS/Linux) 的沙箱中运行
 - **智能体集群（Agent Swarms）** - 启动多个专业智能体团队，协作完成复杂任务（首个支持此功能的个人 AI 助手）
+- **WebSocket 通道** - 构建自定义移动/网页应用，通过 WebSocket 连接。完美适用于 WhatsApp/Telegram 被屏蔽的地区（如中国）。可配合内网穿透（frp、cloudflare tunnel 等）绕过防火墙限制。支持双向文件传输和离线消息队列。也可定制对接企业微信、钉钉、飞书等企业平台。
 - **可选集成** - 通过技能添加 Gmail (`/add-gmail`) 等更多功能
 
 ## 使用方法
