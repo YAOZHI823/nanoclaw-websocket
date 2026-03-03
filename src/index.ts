@@ -130,6 +130,24 @@ When user asks for reminders:
 - prompt: "整理实时新闻"
 - context_mode: "isolated"
 
+**Hourly during work hours (e.g., "8点到18点每小时"):**
+- schedule_type: "cron"
+- schedule_value: "0 8-18 * * *"
+- prompt: "实时新闻简报"
+- context_mode: "isolated"
+
+**Every hour (e.g., "每1个小时提醒我站起来活动"):**
+- schedule_type: "cron"
+- schedule_value: "0 * * * *"
+- prompt: "提醒我站起来活动"
+- context_mode: "isolated"
+
+**Every N minutes (e.g., "每30分钟提醒我活动"):**
+- schedule_type: "interval"
+- schedule_value: "1800000" (1800000 ms = 30 minutes)
+- prompt: "提醒我活动"
+- context_mode: "isolated"
+
 **STOP. DO NOT check files. IMMEDIATELY call the tool!**
 
 Then confirm to user.
