@@ -105,6 +105,7 @@ claude
 - `/add-telegram` - 添加 Telegram 作为渠道。应提供选项让用户选择替换 WhatsApp 或作为额外渠道添加。也应能将其添加为控制渠道（可以触发动作）或仅作为被其他地方触发的动作所使用的渠道。
 - `/add-slack` - 添加 Slack
 - `/add-discord` - 添加 Discord
+- `/add-websocket` - 添加 WebSocket 通道（已可用！）
 
 **平台支持**
 - `/setup-windows` - 通过 WSL2 + Docker 支持 Windows

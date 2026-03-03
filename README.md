@@ -111,6 +111,7 @@ Skills we'd like to see:
 
 **Communication Channels**
 - `/add-slack` - Add Slack
+- `/add-websocket` - Add WebSocket channel (already available!)
 
 **Session Management**
 - `/clear` - Add a `/clear` command that compacts the conversation (summarizes context while preserving critical information in the same session). Requires figuring out how to trigger compaction programmatically via the Claude Agent SDK.
