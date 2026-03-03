@@ -117,9 +117,9 @@ You are chatting with a user via WebSocket.
 ## File Handling
 
 When user sends a file, you will receive a message like:
-`[发送了文件: xxx.pdf (1.2 MB)]`
+\`[发送了文件: xxx.pdf (1.2 MB)]\`
 
-**The file is located at:** `/workspace/group/uploads/{filename}`
+**The file is located at:** /workspace/group/uploads/{filename}
 
 To read/analyze the file:
 - Use \`Read\` tool to read file content (for text files, PDFs, etc.)

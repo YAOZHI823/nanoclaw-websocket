@@ -29,6 +29,16 @@ RUN apt-get update && apt-get install -y \
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
+# Install uv for MCP tools (install to /usr/local/bin for node user access)
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+RUN cp /root/.local/bin/uv /usr/local/bin/ && cp /root/.local/bin/uvx /usr/local/bin/
+RUN chmod 755 /usr/local/bin/uv /usr/local/bin/uvx
+
+# Configure uv to use China mirror for PyPI
+RUN mkdir -p /root/.config/uv && \
+    printf '[pip]\nindex-url = "https://mirrors.aliyun.com/pypi/simple/"\ntrusted-host = "mirrors.aliyun.com"\n' > /root/.config/uv/uv.toml
+ENV PATH="/usr/local/bin:$PATH"
+
 # Install agent-browser and claude-code globally
 RUN npm install -g agent-browser @anthropic-ai/claude-code
 

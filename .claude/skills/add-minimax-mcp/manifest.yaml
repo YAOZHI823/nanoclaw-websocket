@@ -1,0 +1,10 @@
+skill: minimax-mcp
+version: 1.0.0
+description: "Add MiniMax Coding Plan MCP to container - provides web_search and understand_image tools"
+core_version: 0.1.0
+adds: []
+modifies:
+  - container/Dockerfile
+  - .mcp.json
+conflicts: []
+depends: []

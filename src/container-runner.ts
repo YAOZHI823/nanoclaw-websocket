@@ -16,7 +16,6 @@ import {
   TIMEZONE,
 } from './config.js';
 import { readEnvFile } from './env.js';
-import { MAIN_GROUP_FOLDER } from './config.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import {
@@ -58,6 +57,7 @@ interface VolumeMount {
 function buildVolumeMounts(
   group: RegisteredGroup,
   isMain: boolean,
+  secrets?: Record<string, string>,
 ): VolumeMount[] {
   const mounts: VolumeMount[] = [];
   const projectRoot = process.cwd();
@@ -112,43 +112,60 @@ function buildVolumeMounts(
   fs.mkdirSync(groupSessionsDir, { recursive: true });
   const settingsFile = path.join(groupSessionsDir, 'settings.json');
   if (!fs.existsSync(settingsFile)) {
-    // For device groups (device-*), copy settings from main group as template
-    // This ensures they have the correct API tokens and configuration
-    let settings: Record<string, unknown> = {};
-    if (group.folder.startsWith('device-')) {
-      const mainSettingsFile = path.join(
-        DATA_DIR,
-        'sessions',
-        MAIN_GROUP_FOLDER,
-        '.claude',
-        'settings.json',
-      );
-      if (fs.existsSync(mainSettingsFile)) {
-        try {
-          settings = JSON.parse(fs.readFileSync(mainSettingsFile, 'utf-8'));
-          console.log(`[container-runner] Copied settings from main group for device: ${group.folder}`);
-        } catch {
-          console.warn(`[container-runner] Failed to read main settings, using defaults`);
-        }
-      }
-    }
-
-    // Add default settings if not already set
-    const envSettings = settings.env as Record<string, string> || {};
-    settings.env = envSettings;
-    const defaults: Record<string, string> = {
+    // Build env settings from defaults and secrets
+    const envSettings: Record<string, string> = {
+      // Enable agent swarms (subagent orchestration)
+      // https://code.claude.com/docs/en/agent-teams#orchestrate-teams-of-claude-code-sessions
       CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+      // Load CLAUDE.md from additional mounted directories
+      // https://code.claude.com/docs/en/memory#load-memory-from-additional-directories
       CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
+      // Enable Claude's memory feature (persists user preferences between sessions)
+      // https://code.claude.com/docs/en/memory#manage-auto-memory
       CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
-      CLAUDE_CONFIG_DIR: '/home/node/.claude',
     };
-    for (const [key, value] of Object.entries(defaults)) {
-      if (!(key in envSettings)) {
+
+    // Add secrets to env settings
+    if (secrets) {
+      for (const [key, value] of Object.entries(secrets)) {
         envSettings[key] = value;
       }
     }
 
-    fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + '\n');
+    fs.writeFileSync(
+      settingsFile,
+      JSON.stringify({ env: envSettings }, null, 2) + '\n',
+    );
+  }
+
+  // Sync MCP servers: read .mcp.json and inject secrets into .claude.json
+  const mcpConfigPath = path.join(process.cwd(), '.mcp.json');
+  if (fs.existsSync(mcpConfigPath)) {
+    try {
+      const mcpConfig = JSON.parse(fs.readFileSync(mcpConfigPath, 'utf-8'));
+      const mcpServers = mcpConfig.mcpServers as Record<string, unknown> || {};
+
+      // Inject secrets into MCP env
+      for (const [serverName, serverConfig] of Object.entries(mcpServers)) {
+        if (serverConfig && typeof serverConfig === 'object') {
+          const config = serverConfig as Record<string, unknown>;
+          const env = config.env as Record<string, string> || {};
+          for (const [key, value] of Object.entries(env)) {
+            if (typeof value === 'string' && value.startsWith('__') && value.endsWith('__')) {
+              const secretName = value.slice(2, -2);
+              env[key] = secrets?.[secretName] || '';
+            }
+          }
+          config.env = env;
+        }
+      }
+
+      // Write to .claude.json in group folder
+      const claudeJsonPath = path.join(groupSessionsDir, '.claude.json');
+      fs.writeFileSync(claudeJsonPath, JSON.stringify({ mcpServers }, null, 2) + '\n');
+    } catch (err) {
+      console.warn(`[container-runner] Failed to process MCP config: ${err}`);
+    }
   }
 
   // Sync skills from container/skills/ into each group's .claude/skills/
@@ -162,69 +179,6 @@ function buildVolumeMounts(
       fs.cpSync(srcDir, dstDir, { recursive: true });
     }
   }
-
-  // Sync MCP servers: copy mcp directory to group and create .mcp.json
-  const mcpSrc = path.join(process.cwd(), 'mcp');
-  const mcpDst = path.join(groupSessionsDir, 'mcp');
-  if (fs.existsSync(mcpSrc)) {
-    // Copy mcp directory to group's session folder
-    if (fs.existsSync(mcpDst)) {
-      fs.rmSync(mcpDst, { recursive: true });
-    }
-    fs.cpSync(mcpSrc, mcpDst, { recursive: true });
-
-    // Create .mcp.json in group folder with container paths
-    const mcpConfigPath = path.join(groupDir, '.mcp.json');
-    const mcpServers: Record<string, unknown> = {};
-
-    // Read source .mcp.json to get MCP server configurations
-    const sourceMcpConfigPath = path.join(process.cwd(), '.mcp.json');
-    if (fs.existsSync(sourceMcpConfigPath)) {
-      try {
-        const sourceConfig = JSON.parse(fs.readFileSync(sourceMcpConfigPath, 'utf-8'));
-        const sourceServers = sourceConfig.mcpServers as Record<string, unknown> || {};
-
-        // Transform paths from host to container paths
-        for (const [serverName, serverConfig] of Object.entries(sourceServers)) {
-          if (serverConfig && typeof serverConfig === 'object') {
-            const config = serverConfig as Record<string, unknown>;
-            const args = config.args as string[] || [];
-
-            // Transform paths in args from host to container paths
-            const transformedArgs = args.map((arg) => {
-              if (typeof arg === 'string' && arg.includes('/Users/yao/')) {
-                // Replace host path with container path
-                return arg.replace(/\/Users\/yao\/Downloads\/nanoclaw\//g, '/workspace/group/');
-              }
-              return arg;
-            });
-
-            mcpServers[serverName] = {
-              ...config,
-              args: transformedArgs,
-            };
-          }
-        }
-      } catch (err) {
-        console.warn(`[container-runner] Failed to read source .mcp.json: ${err}`);
-      }
-    }
-
-    // Always add fetch MCP if the dist exists (for convenience)
-    // Note: groupSessionsDir is mounted to /home/node/.claude/
-    const fetchDistPath = path.join(mcpDst, 'fetch-mcp', 'dist', 'index.js');
-    if (fs.existsSync(fetchDistPath) && !mcpServers.fetch) {
-      mcpServers.fetch = {
-        command: 'node',
-        args: ['/home/node/.claude/mcp/fetch-mcp/dist/index.js'],
-      };
-    }
-
-    // Write MCP config to .claude.json in groupSessionsDir (mounted to /home/node/.claude/)
-    const claudeJsonPath = path.join(groupSessionsDir, '.claude.json');
-    fs.writeFileSync(claudeJsonPath, JSON.stringify({ mcpServers }, null, 2) + '\n');
-  }
-
   mounts.push({
     hostPath: groupSessionsDir,
     containerPath: '/home/node/.claude',
@@ -285,35 +239,32 @@ function buildVolumeMounts(
  * Secrets are never written to disk or mounted as files.
  */
 function readSecrets(): Record<string, string> {
-  return readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
+  return readEnvFile([
+    'CLAUDE_CODE_OAUTH_TOKEN',
+    'ANTHROPIC_API_KEY',
+    'ANTHROPIC_AUTH_TOKEN',
+    'ANTHROPIC_BASE_URL',
+    'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+    'ANTHROPIC_DEFAULT_OPUS_MODEL',
+    'ANTHROPIC_DEFAULT_SONNET_MODEL',
+    'ANTHROPIC_MODEL',
+    'ANTHROPIC_REASONING_MODEL',
+    'API_TIMEOUT_MS',
+    'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
+    'CLAUDE_CONFIG_DIR',
+    'MINIMAX_API_KEY',
+    'MINIMAX_API_HOST',
+  ]);
 }
 
 function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
-  chatJid?: string,
-  groupFolder?: string,
-  isMain?: boolean,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
-
-  // Pass chat JID for file transfer commands
-  if (chatJid) {
-    args.push('-e', `NANOCLAW_CHAT_JID=${chatJid}`);
-  }
-
-  // Pass group folder
-  if (groupFolder) {
-    args.push('-e', `NANOCLAW_GROUP_FOLDER=${groupFolder}`);
-  }
-
-  // Pass isMain flag
-  if (isMain !== undefined) {
-    args.push('-e', `NANOCLAW_IS_MAIN=${isMain ? '1' : '0'}`);
-  }
 
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),
@@ -349,10 +300,13 @@ export async function runContainerAgent(
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
 
-  const mounts = buildVolumeMounts(group, input.isMain);
+  // Read secrets for settings.json and MCP configuration
+  const secrets = readSecrets();
+  console.log('[container-runner] Secrets keys:', Object.keys(secrets));
+  const mounts = buildVolumeMounts(group, input.isMain, secrets);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName, input.chatJid, input.groupFolder, input.isMain);
+  const containerArgs = buildContainerArgs(mounts, containerName);
 
   logger.debug(
     {
