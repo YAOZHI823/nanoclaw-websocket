@@ -2,7 +2,7 @@
  * Container Runner for NanoClaw
  * Spawns agent execution in containers and handles IPC
  */
-import { ChildProcess, exec, spawn } from 'child_process';
+import { ChildProcess, exec, execSync, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -189,14 +189,26 @@ function buildVolumeMounts(
   }
 
   // Sync skills from container/skills/ into each group's .claude/skills/
+  // Use shell cp to avoid fs.cpSync crash on macOS with Docker osxfs
   const skillsSrc = path.join(process.cwd(), 'container', 'skills');
   const skillsDst = path.join(groupSessionsDir, 'skills');
   if (fs.existsSync(skillsSrc)) {
+    // Remove existing skills dir first to avoid osxfs issues
+    if (fs.existsSync(skillsDst)) {
+      fs.rmSync(skillsDst, { recursive: true, force: true });
+    }
+    // Create skills directory
+    fs.mkdirSync(skillsDst, { recursive: true });
     for (const skillDir of fs.readdirSync(skillsSrc)) {
       const srcDir = path.join(skillsSrc, skillDir);
       if (!fs.statSync(srcDir).isDirectory()) continue;
       const dstDir = path.join(skillsDst, skillDir);
-      fs.cpSync(srcDir, dstDir, { recursive: true });
+      // Use shell cp instead of fs.cpSync to avoid crash
+      try {
+        execSync(`cp -R "${srcDir}" "${dstDir}"`, { stdio: 'ignore' });
+      } catch {
+        logger.warn({ srcDir, dstDir }, 'Failed to copy skill directory');
+      }
     }
   }
 
