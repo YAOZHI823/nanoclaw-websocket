@@ -9,49 +9,32 @@ This skill adds MiniMax Coding Plan MCP to the NanoClaw container, enabling agen
 - **web_search**: Network search tool
 - **understand_image**: Image understanding and analysis tool
 
+## How it works
+
+1. **.mcp.json** - 配置 MCP 服务器，使用 `__ANTHROPIC_API_KEY__` 占位符
+2. **container-runner.ts** - 运行时从 `.env` 读取并注入实际 API key 到容器
+3. **Dockerfile** - 安装 uv 并配置国内镜像源
+
 ## Pre-flight
 
 ### Check if already applied
-
-Check if the skill was already applied by looking for `minimax` in `.mcp.json`:
 
 ```bash
 grep -i minimax .mcp.json
 ```
 
-If found, skip to Phase 2 (Setup).
+If found, skip to Phase 2.
 
-### Ask the user for API Key
+### Requirements
 
-Use `AskUserQuestion` to collect the MiniMax API Key:
+1. MiniMax API Key in `.env` (ANTHROPIC_API_KEY or MINIMAX_API_KEY)
+2. Container rebuilt with new code
 
-AskUserQuestion: Please provide your MiniMax API Key
-- **I have an API key** - Enter your API key
-- **I need to subscribe** - Tell user to subscribe at https://platform.minimaxi.com/subscribe/coding-plan
-
-If they need to subscribe, tell them:
-
-> 1. Go to https://platform.minimaxi.com/subscribe/coding-plan
-> 2. Subscribe to a plan to get your API key
-> 3. Return here with the API key
-
-## Phase 1: Apply Code Changes
-
-### Modify Dockerfile
-
-Edit `container/Dockerfile` to add uv installation after the system dependencies section (around line 26):
-
-Add before the Chromium ENV lines:
-
-```dockerfile
-# Install uv for MCP tools
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.local/bin:$PATH"
-```
+## Phase 1: Configure MCP
 
 ### Modify .mcp.json
 
-Add the MiniMax MCP configuration to `.mcp.json`:
+Add MiniMax MCP configuration with `__ANTHROPIC_API_KEY__` placeholder:
 
 ```json
 {
@@ -60,7 +43,7 @@ Add the MiniMax MCP configuration to `.mcp.json`:
       "command": "uvx",
       "args": ["minimax-coding-plan-mcp", "-y"],
       "env": {
-        "MINIMAX_API_KEY": "YOUR_API_KEY_HERE",
+        "MINIMAX_API_KEY": "__ANTHROPIC_API_KEY__",
         "MINIMAX_API_HOST": "https://api.minimaxi.com"
       }
     }
@@ -68,76 +51,71 @@ Add the MiniMax MCP configuration to `.mcp.json`:
 }
 ```
 
-Replace `YOUR_API_KEY_HERE` with the user's actual API key.
+The placeholder `__ANTHROPIC_API_KEY__` will be automatically replaced with the actual API key from `.env`.
 
-### Save API Key to environment
+### Ensure API Key in .env
 
-The API key needs to be available in the container. Add it to the environment file:
+Make sure `.env` contains:
 
-```bash
-echo "MINIMAX_API_KEY=your_api_key" >> data/env/env
+```
+ANTHROPIC_API_KEY=your_minimax_api_key
+# or
+MINIMAX_API_KEY=your_minimax_api_key
 ```
 
-## Phase 2: Rebuild Container
-
-### Build the container
+## Phase 2: Rebuild
 
 ```bash
-cd /Users/yao/Downloads/nanoclaw
-./container/build.sh
-```
+# Rebuild container
+docker buildx build --no-cache -t nanoclaw-agent:latest -f container/Dockerfile container/
 
-Or with no cache:
-
-```bash
-docker buildx build --no-cache -t nanoclaw-agent -f container/Dockerfile container/
+# Restart NanoClaw
+launchctl kickstart -k gui/$(id -u)/com.nanoclaw
 ```
 
 ## Phase 3: Verify
 
-### Test MCP availability
-
-Inside a running container, verify the MCP is available:
+Check settings.json has the API key:
 
 ```bash
-claude mcp list
-# Should show: minimax mcp: web_search, understand_image
+docker exec <container> cat /home/node/.claude/settings.json
 ```
 
-Or test directly:
+Check MCP config:
 
 ```bash
-claude mcp call minimax web_search --query "test"
+docker exec <container> cat /home/node/.claude/.claude.json
+```
+
+Test MCP:
+
+```bash
+docker exec <container> uvx minimax-coding-plan-mcp --version
 ```
 
 ## Usage
 
-Once installed, agents can use the tools:
+In Claude Code inside container:
 
 ```bash
-# Search the web
-mcp__MiniMax__web_search --query "your search query"
-
-# Understand an image
+mcp__MiniMax__web_search --query "search query"
 mcp__MiniMax__understand_image --image_source "/path/to/image.jpg" --prompt "Describe this image"
 ```
 
 ## Troubleshooting
 
-### MCP not available in container
+### Network error
 
-1. Check uv is installed in container: `which uvx`
-2. Check API key is set: `echo $MINIMAX_API_KEY`
-3. Check .mcp.json is synced: `cat /home/node/.claude/.mcp.json`
+If uv can't download packages, check the mirror configuration in Dockerfile.
 
-### API errors
+### MCP not available
 
-Verify the API key is correct and has sufficient quota at https://platform.minimaxi.com/
+1. Check uvx: `which uvx`
+2. Check settings.json: `cat /home/node/.claude/settings.json`
+3. Check .claude.json: `cat /home/node/.claude/.claude.json`
 
 ## Removal
 
-To remove MiniMax MCP:
-
-1. Remove the MiniMax entry from `.mcp.json`
-2. Remove uv installation from `container/Dockerfile` (optional)
-3. Rebuild the container: `./container/build.sh`
+1. Remove MiniMax entry from `.mcp.json`
+2. Rebuild container
+3. Restart NanoClaw
