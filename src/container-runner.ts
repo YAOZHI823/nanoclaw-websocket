@@ -140,8 +140,8 @@ function buildVolumeMounts(
     );
   }
 
-  // Sync MCP servers: read .mcp.json and inject secrets into .claude.json
-  const mcpConfigPath = path.join(process.cwd(), '.mcp.json');
+  // Sync MCP servers: read container/.mcp.json and inject secrets into .claude.json
+  const mcpConfigPath = path.join(process.cwd(), 'container', '.mcp.json');
   if (fs.existsSync(mcpConfigPath)) {
     try {
       const mcpConfig = JSON.parse(fs.readFileSync(mcpConfigPath, 'utf-8'));
