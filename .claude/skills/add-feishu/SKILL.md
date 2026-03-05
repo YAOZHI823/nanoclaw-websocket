@@ -105,9 +105,12 @@ export const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || '';
 ### 2. Configure Capabilities
 1. In the app settings, go to **"Add Features" (添加应用能力)** -> **"Bot" (机器人)** -> Click "Add".
 2. Go to **"Permissions" (权限管理)** and add the following permissions:
-   - `im:message` (获取用户发给机器人的单聊消息)
-   - `im:message.group_at_msg` (获取群组中@机器人的消息)
-   - `im:message:send_as_bot` (以应用身份发送消息)
+  - `im:message`（获取用户发给机器人的单聊消息）
+  - `im:message.group_at_msg`（获取群组中 @ 机器人的消息）
+  - `im:message:send_as_bot`（以应用身份发送消息）
+  - `im:message` (获取与发送单聊、群组消息)
+  - `drive:file` (上传、下载文件)
+  - `im:resource` (获取与上传图片或文件资源)
 3. Go to **"Version Management & Release" (版本管理与发布)** -> Create a version -> Submit for release (Auto-approved for self-built apps).
 
 ### 3. Get Credentials
