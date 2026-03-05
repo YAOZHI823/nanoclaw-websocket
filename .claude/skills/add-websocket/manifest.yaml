@@ -1,0 +1,34 @@
+name: add-websocket
+description: Add WebSocket channel for custom mobile/web apps
+version: 1.0.0
+author: NanoClaw
+
+# Skills to apply first (dependencies)
+dependencies: []
+
+# Files to add
+add:
+  - src/channels/websocket.ts
+  - examples/mobile-websocket/
+  - container/bin/send-file-to-client
+  - container/skills/send-file-to-client/
+
+# Files to modify
+modify:
+  - src/index.ts
+  - src/config.ts
+  - src/types.ts
+  - src/ipc.ts
+  - src/router.ts
+
+# Environment variables
+env:
+  - WEBSOCKET_PORT
+
+# npm dependencies
+npm_dependencies: []
+
+# Container updates
+container_updates:
+  - container/bin/send-file-to-client
+  - container/skills/send-file-to-client/
