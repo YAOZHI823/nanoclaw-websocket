@@ -311,6 +311,7 @@ function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
   chatJid?: string,
+  groupFolder?: string,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
@@ -320,6 +321,11 @@ function buildContainerArgs(
   // Pass chat JID for skills that need to send responses back
   if (chatJid) {
     args.push('-e', `NANOCLAW_CHAT_JID=${chatJid}`);
+  }
+
+  // Pass group folder for container-config and other tools
+  if (groupFolder) {
+    args.push('-e', `NANOCLAW_GROUP_FOLDER=${groupFolder}`);
   }
 
   // Run as host user so bind-mounted files are accessible.
@@ -362,7 +368,7 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain, secrets);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName, input.chatJid);
+  const containerArgs = buildContainerArgs(mounts, containerName, input.chatJid, group.folder);
 
   logger.debug(
     {
