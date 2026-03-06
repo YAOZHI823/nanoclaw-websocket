@@ -273,6 +273,7 @@ function buildVolumeMounts(
 
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {
+    logger.info({ mounts: group.containerConfig.additionalMounts }, 'Processing additional mounts from containerConfig');
     const validatedMounts = validateAdditionalMounts(
       group.containerConfig.additionalMounts,
       group.name,

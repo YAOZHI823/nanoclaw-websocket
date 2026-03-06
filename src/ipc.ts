@@ -506,17 +506,26 @@ async function handleContainerConfig(
         logger.warn({ hostPath: mount.hostPath }, 'Mount already exists, skipping');
         return;
       }
+      // Strip /workspace/extra/ prefix if present - validation will add it back
+      let containerPath = mount.containerPath || '';
+      if (containerPath.startsWith('/workspace/extra/')) {
+        containerPath = containerPath.replace('/workspace/extra/', '');
+      }
+      // If containerPath is empty or ".", use basename of hostPath
+      if (!containerPath || containerPath === '.') {
+        containerPath = path.basename(mount.hostPath);
+      }
       newMounts = [
         ...currentMounts,
         {
           hostPath: mount.hostPath,
-          containerPath: mount.containerPath,
+          containerPath: containerPath,
           readonly: mount.readonly ?? true,
           isDefault: mount.isDefault ?? false,
         },
       ];
       logger.info(
-        { hostPath: mount.hostPath, containerPath: mount.containerPath, readonly: mount.readonly },
+        { hostPath: mount.hostPath, containerPath: containerPath, readonly: mount.readonly },
         'Adding mount',
       );
       break;

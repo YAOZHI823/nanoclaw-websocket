@@ -80,6 +80,14 @@ export function loadMountAllowlist(): MountAllowlist | null {
       throw new Error('allowedRoots must be an array');
     }
 
+    // Support both string format ["path"] and object format [{"path": "path", "allowReadWrite": true}]
+    allowlist.allowedRoots = allowlist.allowedRoots.map((root: any) => {
+      if (typeof root === 'string') {
+        return { path: root, allowReadWrite: true };
+      }
+      return root;
+    });
+
     if (!Array.isArray(allowlist.blockedPatterns)) {
       throw new Error('blockedPatterns must be an array');
     }
@@ -122,6 +130,10 @@ export function loadMountAllowlist(): MountAllowlist | null {
  * Expand ~ to home directory and resolve to absolute path
  */
 function expandPath(p: string): string {
+  // Handle empty or undefined path
+  if (!p) {
+    return '';
+  }
   const homeDir = process.env.HOME || os.homedir();
   if (p.startsWith('~/')) {
     return path.join(homeDir, p.slice(2));
@@ -188,7 +200,10 @@ function findAllowedRoot(
 
     // Check if realPath is under realRoot
     const relative = path.relative(realRoot, realPath);
-    if (!relative.startsWith('..') && !path.isAbsolute(relative)) {
+    const isUnder = !relative.startsWith('..') && !path.isAbsolute(relative);
+    logger.warn({ rootPath: root.path, expandedRoot, realRoot, realPath, relative, isUnder }, 'findAllowedRoot debug');
+
+    if (isUnder) {
       return root;
     }
   }
@@ -200,6 +215,11 @@ function findAllowedRoot(
  * Validate the container path to prevent escaping /workspace/extra/
  */
 function isValidContainerPath(containerPath: string): boolean {
+  // Allow special value "group" for /workspace/group
+  if (containerPath === 'group') {
+    return true;
+  }
+
   // Must not contain .. to prevent path traversal
   if (containerPath.includes('..')) {
     return false;
@@ -281,11 +301,11 @@ export function validateMount(
   // Check if under an allowed root
   const allowedRoot = findAllowedRoot(realPath, allowlist.allowedRoots);
   if (allowedRoot === null) {
+    const rootsDebug = allowlist.allowedRoots.map((r) => JSON.stringify(r)).join(', ');
+    logger.warn({ allowedRoots: rootsDebug, realPath }, 'Allowed roots debug');
     return {
       allowed: false,
-      reason: `Path "${realPath}" is not under any allowed root. Allowed roots: ${allowlist.allowedRoots
-        .map((r) => expandPath(r.path))
-        .join(', ')}`,
+      reason: `Path "${realPath}" is not under any allowed root. Allowed roots: ${rootsDebug}`,
     };
   }
 
@@ -352,9 +372,17 @@ export function validateAdditionalMounts(
     const result = validateMount(mount, isMain);
 
     if (result.allowed) {
+      // Check if special "group" path
+      let finalContainerPath: string;
+      if (result.resolvedContainerPath === 'group') {
+        finalContainerPath = '/workspace/group';
+      } else {
+        finalContainerPath = `/workspace/extra/${result.resolvedContainerPath}`;
+      }
+
       validatedMounts.push({
         hostPath: result.realHostPath!,
-        containerPath: `/workspace/extra/${result.resolvedContainerPath}`,
+        containerPath: finalContainerPath,
         readonly: result.effectiveReadonly!,
       });
 
