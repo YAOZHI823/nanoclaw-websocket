@@ -11,10 +11,10 @@ import {
   DEVICE_JID_PATTERN,
 } from './config.js';
 import { AvailableGroup } from './container-runner.js';
-import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
+import { createTask, deleteTask, getRegisteredGroup, getTaskById, setRegisteredGroup, updateTask } from './db.js';
 import { isValidGroupFolder, resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
-import { RegisteredGroup } from './types.js';
+import { AdditionalMount, ContainerConfig, RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -143,6 +143,28 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   logger.warn(
                     { chatJid: data.chatJid, sourceGroup },
                     'Unauthorized IPC file send attempt blocked',
+                  );
+                }
+              } else if (data.type === 'container_config') {
+                // Handle container config updates (mounts, etc.)
+                // Allow only from the group's own IPC directory
+                if (data.sourceGroup === sourceGroup || isMain) {
+                  try {
+                    await handleContainerConfig(data, sourceGroup, deps);
+                    logger.info(
+                      { action: data.action, sourceGroup },
+                      'Container config updated',
+                    );
+                  } catch (err) {
+                    logger.error(
+                      { err, action: data.action, sourceGroup },
+                      'Failed to update container config',
+                    );
+                  }
+                } else {
+                  logger.warn(
+                    { sourceGroup, expected: data.sourceGroup },
+                    'Unauthorized container config attempt blocked',
                   );
                 }
               }
@@ -429,4 +451,118 @@ export async function processTaskIpc(
     default:
       logger.warn({ type: data.type }, 'Unknown IPC task type');
   }
+}
+
+/**
+ * Handle container configuration updates from IPC
+ * Supports: add_mount, remove_mount, list, clear
+ */
+async function handleContainerConfig(
+  data: {
+    type: string;
+    action: string;
+    sourceGroup: string;
+    mount?: {
+      hostPath: string;
+      containerPath?: string;
+      readonly?: boolean;
+      isDefault?: boolean;
+    };
+  },
+  sourceGroup: string,
+  _deps: IpcDeps,
+): Promise<void> {
+  const { action, sourceGroup: groupFolder, mount } = data;
+
+  // Find the registered group by folder
+  const groups = _deps.registeredGroups();
+  let targetJid: string | undefined;
+  for (const [jid, group] of Object.entries(groups)) {
+    if (group.folder === groupFolder) {
+      targetJid = jid;
+      break;
+    }
+  }
+
+  if (!targetJid) {
+    throw new Error(`Group not found: ${groupFolder}`);
+  }
+
+  const currentGroup = groups[targetJid];
+  const currentConfig: ContainerConfig = currentGroup?.containerConfig || {};
+  const currentMounts: AdditionalMount[] = currentConfig.additionalMounts || [];
+
+  let newMounts: AdditionalMount[] = [];
+
+  switch (action) {
+    case 'add_mount': {
+      if (!mount?.hostPath) {
+        throw new Error('Missing mount.hostPath for add_mount');
+      }
+      // Check if already exists
+      const exists = currentMounts.some((m) => m.hostPath === mount.hostPath);
+      if (exists) {
+        logger.warn({ hostPath: mount.hostPath }, 'Mount already exists, skipping');
+        return;
+      }
+      newMounts = [
+        ...currentMounts,
+        {
+          hostPath: mount.hostPath,
+          containerPath: mount.containerPath,
+          readonly: mount.readonly ?? true,
+          isDefault: mount.isDefault ?? false,
+        },
+      ];
+      logger.info(
+        { hostPath: mount.hostPath, containerPath: mount.containerPath, readonly: mount.readonly },
+        'Adding mount',
+      );
+      break;
+    }
+
+    case 'remove_mount': {
+      if (!mount?.hostPath) {
+        throw new Error('Missing mount.hostPath for remove_mount');
+      }
+      newMounts = currentMounts.filter((m) => m.hostPath !== mount.hostPath);
+      logger.info({ hostPath: mount.hostPath }, 'Removing mount');
+      break;
+    }
+
+    case 'clear': {
+      // Keep only default mounts (isDefault: true)
+      newMounts = currentMounts.filter((m) => m.isDefault === true);
+      logger.info({ kept: newMounts.length }, 'Clearing user mounts, keeping defaults');
+      break;
+    }
+
+    case 'list': {
+      // For list, we just log - the container can query through other means
+      logger.info(
+        { mounts: currentMounts.map((m) => ({ ...m, isDefault: m.isDefault ?? false })) },
+        'Listing mounts',
+      );
+      return;
+    }
+
+    default:
+      throw new Error(`Unknown container_config action: ${action}`);
+  }
+
+  // Update the group configuration
+  const newConfig: RegisteredGroup['containerConfig'] = {
+    ...currentConfig,
+    additionalMounts: newMounts,
+  };
+
+  setRegisteredGroup(targetJid, {
+    ...currentGroup,
+    containerConfig: newConfig,
+  });
+
+  logger.info(
+    { action, mountCount: newMounts.length, groupFolder },
+    'Container config updated successfully',
+  );
 }
