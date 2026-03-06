@@ -29,6 +29,25 @@ Keywords: "mount", "挂载", "container config", "container-config"
 - 用户想让 agent 使用自己的配置文件
 - 动态调整容器挂载配置
 
+## 配置文件格式
+
+`~/.config/nanoclaw/mount-allowlist.json`:
+
+```json
+{
+  "allowedRoots": [
+    "/Users/yao/Downloads",
+    "~/projects"
+  ],
+  "blockedPatterns": [],
+  "nonMainReadOnly": false
+}
+```
+
+支持两种格式：
+- 字符串数组：`["/path"]` - 默认 allowReadWrite: true
+- 对象数组：`[{"path": "/path", "allowReadWrite": true}]`
+
 ## 阶段 1：代码修改
 
 ### 1. 修改 `src/types.ts`
@@ -40,11 +59,43 @@ export interface AdditionalMount {
   hostPath: string;
   containerPath?: string;
   readonly?: boolean;
-  isDefault?: boolean;  // 新增：标记是否为默认挂载
+  isDefault?: boolean;
 }
 ```
 
-### 2. 修改 `src/ipc.ts`
+### 2. 修改 `src/mount-security.ts`
+
+1. 添加空路径处理：
+```typescript
+function expandPath(p: string): string {
+  if (!p) {
+    return '';
+  }
+  // ...
+}
+```
+
+2. 支持 "group" 特殊值：
+```typescript
+function isValidContainerPath(containerPath: string): boolean {
+  if (containerPath === 'group') {
+    return true;
+  }
+  // ...
+}
+```
+
+3. 支持字符串格式的 allowedRoots：
+```typescript
+allowlist.allowedRoots = allowlist.allowedRoots.map((root: any) => {
+  if (typeof root === 'string') {
+    return { path: root, allowReadWrite: true };
+  }
+  return root;
+});
+```
+
+### 3. 修改 `src/ipc.ts`
 
 1. 添加导入：
 ```typescript
@@ -52,26 +103,20 @@ import { getRegisteredGroup, setRegisteredGroup } from './db.js';
 import { AdditionalMount, ContainerConfig } from './types.js';
 ```
 
-2. 在 IPC 消息处理中添加 `container_config` 类型处理
+2. 添加 IPC 处理和 `handleContainerConfig` 函数
 
-3. 添加 `handleContainerConfig` 函数处理以下操作：
-- `add_mount`: 添加挂载
-- `remove_mount`: 移除挂载
-- `list`: 列出挂载
-- `clear`: 清除用户挂载（保留默认挂载）
+### 4. 修改 `src/container-runner.ts`
 
-### 3. 添加容器脚本
-
-创建 `container/bin/container-config` 脚本：
-
-```bash
-#!/bin/bash
-# 用法:
-#   container-config --add-mount <hostPath>[:<containerPath>[:<ro|rw>]]
-#   container-config --remove-mount <hostPath>
-#   container-config --list
-#   container-config --clear
+添加 NANOCLAW_GROUP_FOLDER 环境变量：
+```typescript
+if (groupFolder) {
+  args.push('-e', `NANOCLAW_GROUP_FOLDER=${groupFolder}`);
+}
 ```
+
+### 5. 添加容器脚本
+
+创建 `container/bin/container-config` 脚本
 
 ## 阶段 2：使用
 
@@ -99,6 +144,7 @@ container-config --clear
 - 挂载在**下次容器启动**时生效
 - 宿主机的 `~/dotfiles` 会挂载到容器的 `/workspace/extra/dotfiles`
 - `--clear` 只清除用户添加的挂载，系统默认挂载会被保留
+- 需要在 `~/.config/nanoclaw/mount-allowlist.json` 中配置允许的挂载路径
 
 ---
 
@@ -108,15 +154,25 @@ container-config --clear
 
 Add `isDefault` field to `AdditionalMount` interface.
 
-### 2. Modify `src/ipc.ts`
+### 2. Modify `src/mount-security.ts`
 
-1. Add imports for database functions and types
-2. Add `container_config` IPC handler
-3. Add `handleContainerConfig` function
+1. Add empty path handling in expandPath
+2. Support special "group" value for containerPath
+3. Support string format for allowedRoots
 
-### 3. Add Container Script
+### 3. Modify `src/ipc.ts`
 
-Create `container/bin/container-config` script.
+1. Add imports for database functions
+2. Add IPC handler for container_config
+3. Add handleContainerConfig function
+
+### 4. Modify `src/container-runner.ts`
+
+Add NANOCLAW_GROUP_FOLDER env var
+
+### 5. Add Container Script
+
+Create `container/bin/container-config`
 
 ## Phase 2: Usage
 
@@ -139,8 +195,21 @@ container-config --remove-mount ~/dotfiles
 container-config --clear
 ```
 
+## Config File Format
+
+`~/.config/nanoclaw/mount-allowlist.json`:
+
+```json
+{
+  "allowedRoots": ["/Users/yao/Downloads", "~/projects"],
+  "blockedPatterns": [],
+  "nonMainReadOnly": false
+}
+```
+
 ## Notes
 
 - Mounts take effect on **next container restart**
 - Host path `~/dotfiles` mounts to `/workspace/extra/dotfiles` in container
 - `--clear` only removes user-defined mounts, keeps system defaults
+- Must configure allowed paths in `~/.config/nanoclaw/mount-allowlist.json`
