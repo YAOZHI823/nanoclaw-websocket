@@ -1,0 +1,184 @@
+#!/bin/bash
+# Container config management tool
+# Used to configure container mounts from within the container
+#
+# Usage:
+#   container-config --add-mount <hostPath>[:<containerPath>[:<ro|rw>]]
+#   container-config --remove-mount <hostPath>
+#   container-config --list
+#   container-config --clear
+
+set -e
+
+SCRIPT_NAME="$(basename "$0")"
+
+# Get environment variables
+GROUP_FOLDER="${NANOCLAW_GROUP_FOLDER:-main}"
+IPC_DIR="/workspace/ipc/messages"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+log_info() {
+    echo -e "${GREEN}[INFO]${NC} $1"
+}
+
+log_warn() {
+    echo -e "${YELLOW}[WARN]${NC} $1"
+}
+
+log_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
+
+usage() {
+    echo "Usage: $SCRIPT_NAME <command> [options]"
+    echo ""
+    echo "Commands:"
+    echo "  --add-mount <path>[:<containerPath>[:<ro|rw>]]"
+    echo "                      Add a mount point"
+    echo "  --remove-mount <path>"
+    echo "                      Remove a mount point"
+    echo "  --list              List all mount points"
+    echo "  --clear             Clear all user-defined mount points (keep defaults)"
+    echo ""
+    echo "Examples:"
+    echo "  $SCRIPT_NAME --add-mount ~/dotfiles:dotfiles:ro"
+    echo "  $SCRIPT_NAME --add-mount ~/projects:projects:rw"
+    echo "  $SCRIPT_NAME --list"
+    echo "  $SCRIPT_NAME --remove-mount ~/dotfiles"
+    echo "  $SCRIPT_NAME --clear"
+    exit 1
+}
+
+# Ensure IPC directory exists
+mkdir -p "$IPC_DIR"
+
+# Parse command
+COMMAND="$1"
+if [ -z "$COMMAND" ]; then
+    usage
+fi
+
+shift
+
+case "$COMMAND" in
+    --add-mount)
+        MOUNT_ARG="$1"
+        if [ -z "$MOUNT_ARG" ]; then
+            log_error "Missing mount argument"
+            usage
+        fi
+
+        # Parse mount argument: hostPath[:containerPath[:ro|rw]]
+        IFS=':' read -r HOST_PATH CONTAINER_PATH PERMS <<< "$MOUNT_ARG"
+
+        if [ -z "$HOST_PATH" ]; then
+            log_error "Invalid mount argument: $MOUNT_ARG"
+            usage
+        fi
+
+        # Default container path to basename of host path
+        if [ -z "$CONTAINER_PATH" ]; then
+            CONTAINER_PATH="$(basename "$HOST_PATH")"
+        fi
+
+        # Default to read-only
+        if [ -z "$PERMS" ]; then
+            PERMS="ro"
+        fi
+
+        READONLY="true"
+        if [ "$PERMS" = "rw" ]; then
+            READONLY="false"
+        fi
+
+        # Create IPC message
+        IPC_FILE="${IPC_DIR}/container-config-$(date +%s)-$$-${RANDOM}.json"
+
+        cat > "$IPC_FILE" << EOF
+{
+  "type": "container_config",
+  "action": "add_mount",
+  "sourceGroup": "$GROUP_FOLDER",
+  "mount": {
+    "hostPath": "$HOST_PATH",
+    "containerPath": "$CONTAINER_PATH",
+    "readonly": $READONLY,
+    "isDefault": false
+  }
+}
+EOF
+
+        log_info "Mount added: $HOST_PATH -> /workspace/extra/$CONTAINER_PATH (readonly: $READONLY)"
+        log_info "This will take effect on next container restart"
+        ;;
+
+    --remove-mount)
+        HOST_PATH="$1"
+        if [ -z "$HOST_PATH" ]; then
+            log_error "Missing mount path argument"
+            usage
+        fi
+
+        # Create IPC message
+        IPC_FILE="${IPC_DIR}/container-config-$(date +%s)-$$-${RANDOM}.json"
+
+        cat > "$IPC_FILE" << EOF
+{
+  "type": "container_config",
+  "action": "remove_mount",
+  "sourceGroup": "$GROUP_FOLDER",
+  "mount": {
+    "hostPath": "$HOST_PATH"
+  }
+}
+EOF
+
+        log_info "Mount removal queued: $HOST_PATH"
+        log_info "This will take effect on next container restart"
+        ;;
+
+    --list)
+        # Create IPC message
+        IPC_FILE="${IPC_DIR}/container-config-$(date +%s)-$$-${RANDOM}.json"
+
+        cat > "$IPC_FILE" << EOF
+{
+  "type": "container_config",
+  "action": "list",
+  "sourceGroup": "$GROUP_FOLDER"
+}
+EOF
+
+        # Wait for response
+        RESPONSE_FILE="${IPC_DIR}/container-config-response-$$.json"
+        timeout 5 tail -f "$IPC_DIR" 2>/dev/null | head -1 || true
+
+        log_info "Mount list requested (check host logs for current configuration)"
+        ;;
+
+    --clear)
+        # Create IPC message
+        IPC_FILE="${IPC_DIR}/container-config-$(date +%s)-$$-${RANDOM}.json"
+
+        cat > "$IPC_FILE" << EOF
+{
+  "type": "container_config",
+  "action": "clear",
+  "sourceGroup": "$GROUP_FOLDER"
+}
+EOF
+
+        log_info "All user-defined mounts will be cleared"
+        log_info "This will take effect on next container restart"
+        ;;
+
+    *)
+        log_error "Unknown command: $COMMAND"
+        usage
+        ;;
+esac

@@ -1,0 +1,7 @@
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -4,6 +4,7 @@ export interface AdditionalMount {
+   containerPath?: string; // Optional — defaults to basename of hostPath. Mounted at /workspace/extra/{value}
+   readonly?: boolean; // Default: true for safety
++  isDefault?: boolean; // Whether this is a default mount (not user-defined)
+ }
