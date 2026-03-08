@@ -41,16 +41,9 @@ RUN pip3 install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ \
     pypdf pdfplumber reportlab python-docx python-pptx openpyxl pillow --break-system-packages
 
 # ============ uv 工具 ============
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
-    cp /root/.local/bin/uv /usr/local/bin/ && \
-    cp /root/.local/bin/uvx /usr/local/bin/ && \
-    chmod 755 /usr/local/bin/uv /usr/local/bin/uvx
-
-# 配置 uv 使用阿里云镜像
-RUN mkdir -p /root/.config/uv && \
-    printf '[pip]\nindex-url = "https://mirrors.aliyun.com/pypi/simple/"\ntrusted-host = "mirrors.aliyun.com"\n' > /root/.config/uv/uv.toml
-
-ENV PATH="/usr/local/bin:$PATH"
+# uvx 需要 uv 命令
+RUN pip3 install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ uv --break-system-packages && \
+    rm -f /usr/local/bin/uvx && ln -s /usr/local/bin/uv /usr/local/bin/uvx
 
 # ============ 全局 npm 包 ============
 RUN npm install -g agent-browser @anthropic-ai/claude-code
