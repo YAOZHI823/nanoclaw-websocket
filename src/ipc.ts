@@ -548,11 +548,26 @@ async function handleContainerConfig(
     }
 
     case 'list': {
-      // For list, we just log - the container can query through other means
+      // Build response message with mount list
+      const mountList = currentMounts.map((m) => {
+        const readonly = m.readonly ? '(ro)' : '(rw)';
+        const isDefault = m.isDefault ? '[默认]' : '';
+        return `  - ${m.hostPath} -> /workspace/extra/${m.containerPath} ${readonly} ${isDefault}`;
+      }).join('\n');
+
+      const responseMsg = mountList || '  (无额外挂载)';
       logger.info(
         { mounts: currentMounts.map((m) => ({ ...m, isDefault: m.isDefault ?? false })) },
         'Listing mounts',
       );
+
+      // Send response back to the group via IPC
+      const responseFile = path.join(DATA_DIR, 'ipc', sourceGroup, 'messages', `list-response-${Date.now()}.json`);
+      fs.writeFileSync(responseFile, JSON.stringify({
+        type: 'message',
+        chatJid: targetJid,
+        text: `当前挂载配置:\n${responseMsg}`
+      }));
       return;
     }
 
